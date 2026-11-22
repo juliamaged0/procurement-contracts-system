@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
-  ClipboardList, FileText, Package, Clock, Send,
-  Search, MessageSquare, AlertCircle, CheckCircle2,
-  ChevronRight, Warehouse, Eye, X, Bell, RotateCcw
+  ClipboardList, DollarSign, ShieldCheck, CheckCircle2, XCircle,
+  AlertCircle, ChevronRight, Warehouse, Eye, Search, Plus, Trash2,
+  RotateCcw, FileText, ArrowRight, Stamp, Clock, Calendar, Check,
+  X, AlertTriangle, Layers, Send, Award, Sliders, ChevronDown, ChevronUp,
+  FileCheck2, CheckSquare, Sparkles
 } from 'lucide-react';
 
 const DEPARTMENTS = [
@@ -22,416 +25,1799 @@ const DEPARTMENTS = [
 ];
 
 const OPERATION_TYPES = [
-  { value: 'تعاقدات', label: 'تعاقدات', color: 'bg-blue-50 border-blue-400 text-blue-700', active: 'bg-blue-600 border-blue-600 text-white' },
-  { value: 'توريدات', label: 'توريدات', color: 'bg-emerald-50 border-emerald-400 text-emerald-700', active: 'bg-emerald-600 border-emerald-600 text-white' },
-  { value: 'مزادات', label: 'مزادات', color: 'bg-purple-50 border-purple-400 text-purple-700', active: 'bg-purple-600 border-purple-600 text-white' },
+  { value: 'تعاقدات', label: 'تعاقدات ومقاولات', color: 'border-blue-300 text-blue-700 bg-blue-50', active: 'bg-blue-600 border-blue-600 text-white' },
+  { value: 'توريدات', label: 'توريدات سلع ومهمات', color: 'border-emerald-300 text-emerald-700 bg-emerald-50', active: 'bg-emerald-600 border-emerald-600 text-white' },
+  { value: 'مزادات', label: 'مزادات وبيع خردة', color: 'border-purple-300 text-purple-700 bg-purple-50', active: 'bg-purple-600 border-purple-600 text-white' },
 ];
 
-const WORKFLOW_STEPS = [
-  { label: 'طلب الاحتياج', step: 1 },
-  { label: 'المراجعة المالية', step: 2 },
-  { label: 'موافقة السلطة', step: 3 },
-];
+const TENDER_METHODS_MAP = {
+  'تعاقدات': ['مناقصة عامة', 'مناقصة محدودة', 'ممارسة عامة', 'ممارسة محدودة', 'ممارسة محلية', 'أمر مباشر'],
+  'توريدات': ['مناقصة عامة', 'مناقصة محدودة', 'ممارسة عامة', 'ممارسة محدودة', 'الأمر المباشر'],
+  'مزادات': ['مزايدة عامة', 'مزايدة محدودة', 'أمر مباشر'],
+};
 
-function WorkflowBar({ currentStep }) {
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-      <div className="flex items-center gap-2">
-        {WORKFLOW_STEPS.map((s, idx) => (
-          <React.Fragment key={s.step}>
-            <div className={`flex items-center gap-2 flex-1 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
-              s.step < currentStep ? 'bg-slate-100 text-slate-500 border border-slate-200' :
-              s.step === currentStep ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/30' :
-              'bg-slate-50 text-slate-400 border border-slate-200'
-            }`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
-                s.step < currentStep ? 'bg-slate-300 text-slate-500' :
-                s.step === currentStep ? 'bg-white text-indigo-600' :
-                'bg-slate-200 text-slate-400'
-              }`}>
-                {s.step < currentStep ? '✓' : s.step}
-              </div>
-              <span>{s.label}</span>
-              {s.step === currentStep && <div className="w-2 h-2 rounded-full bg-white/70 animate-pulse mr-auto" />}
-            </div>
-            {idx < WORKFLOW_STEPS.length - 1 && (
-              <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
-            )}
-          </React.Fragment>
-        ))}
-      </div>
-    </div>
-  );
+const METHOD_SYMBOLS = {
+  'تعاقدات': { 'مناقصة عامة': 'هـ', 'مناقصة محدودة': 'هـ م', 'ممارسة عامة': 'م ع', 'ممارسة محدودة': 'م ح', 'ممارسة محلية': 'م م', 'أمر مباشر': 'ا م' },
+  'توريدات': { 'مناقصة عامة': 'ت', 'مناقصة محدودة': 'ت م', 'ممارسة عامة': 'م ت', 'ممارسة محدودة': 'م', 'الأمر المباشر': 'أ', 'أمر مباشر': 'أ' },
+  'مزادات': { 'مزايدة عامة': 'ز', 'مزايدة محدودة': 'ز م', 'أمر مباشر': 'ز أ' },
+};
+
+function getApprovalAuthority(method, amount) {
+  const val = parseFloat(amount) || 0;
+  if (method === 'مناقصة عامة' || method === 'ممارسة عامة') {
+    if (val <= 1500000) return 'نائب رئيس مجلس الإدارة';
+    if (val <= 30000000) return 'رئيس مجلس الإدارة';
+    return 'مجلس الإدارة';
+  }
+  if (method === 'مناقصة محدودة' || method === 'ممارسة محدودة') {
+    if (val <= 1000000) return 'نائب رئيس مجلس الإدارة';
+    if (val <= 15000000) return 'رئيس مجلس الإدارة';
+    return 'مجلس الإدارة';
+  }
+  if (method === 'ممارسة محلية') {
+    if (val <= 500000) return 'نائب رئيس مجلس الإدارة';
+    if (val <= 5000000) return 'رئيس مجلس الإدارة';
+    return 'مجلس الإدارة';
+  }
+  if (method === 'أمر مباشر' || method === 'الأمر المباشر') {
+    if (val <= 100000) return 'نائب رئيس مجلس الإدارة';
+    if (val <= 2000000) return 'رئيس مجلس الإدارة';
+    return 'مجلس الإدارة';
+  }
+  return 'رئيس مجلس الإدارة';
 }
 
 export default function NeedsRequest() {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
-  const [form, setForm] = useState({
+  const [activeTab, setActiveTab] = useState('form'); // 'form' | 'list'
+  const [editingRequestId, setEditingRequestId] = useState(null);
+
+  // Form State
+  const [formData, setFormData] = useState({
+    // Section 1: Basic & Technical Specs
     operationName: '',
     operationType: 'تعاقدات',
     requestingDepartment: '',
     executionDuration: '',
+    fiscalYear: '2025/2026',
     specsAndConditions: '',
     requiresSample: false,
     sampleDetails: '',
-    fiscalYear: '2025/2026',
+    warehouseBalance: 'لا يوجد رصيد بالمخازن',
+
+    // Technical Evaluation Method & Split Awarding
+    technicalEvaluationMethod: 'مطابق أو غير مطابق', // 'مطابق أو غير مطابق' | 'نظام نقاط'
+    minPassingScore: 70, // الحد الأدنى لدرجات القبول الفني للعملية
+    allowSplitAwarding: false, // هل تقبل العملية التجزئة والترسية لكل بند لمورد مختلف؟
+    technicalCriteriaNotes: 'المواصفات الفنية والكفاءة (40 نقطة)، سابقة الأعمال والخبرة (30 نقطة)، الضمان والصيانة (20 نقطة)، سرعة التوريد والتنفيذ (10 نقاط)',
+
+    // Section 2: Financial Details & Items
+    tenderMethodSelected: 'مناقصة عامة',
+    estimatedValue: '',
+    preliminaryReservation: '',
+    reservationTypeNew: 'جاري',
+    budgetHoldReference: '',
+    initialGuaranteePercent: 2,
+    submittalType: 'مظروفيين',
+    bookletPrice: '',
+    constructionDivision: '',
+    constructionCategory: '',
+    operationTerms: '',
+    financialNotes: '',
+
+    // Section 3: Paper Approvals & Authority Decision
+    financialApprovalObtained: true, // هل أخذ موافقة مالية ورقية؟
+    financialApprovalDate: new Date().toISOString().split('T')[0],
+    financialApprovalNotes: '',
+    approvalAuthority: '',
+    authorityApprovalStatus: 'معتمد', // 'معتمد' | 'مرفوض' | 'في انتظار الموافقة'
+    authorityApprovalDate: new Date().toISOString().split('T')[0],
+    reviewedBy: user?.fullName || 'رئيس مجلس الإدارة',
+    authorityRejectionReason: '',
   });
 
+  // Operation Items Table with Technical Details per item
+  const [operationItems, setOperationItems] = useState([
+    {
+      description: '',
+      unit: 'عدد',
+      quantity: 1,
+      unitPrice: 0,
+      specs: '',
+      itemMaxScore: 100,
+      itemMinPassingScore: 70,
+      itemCriteria: 'بلد المنشأ والجودة (30 درجة)، الكفاءة التشغيلية (30 درجة)، فترة الضمان والصيانة (25 درجة)، سرعة التوريد (15 درجة)',
+      allowSplit: true,
+      isExpanded: false
+    }
+  ]);
+
+  // Warehouse Search Modal
   const [inventory, setInventory] = useState([]);
   const [inventorySearch, setInventorySearch] = useState('');
-  const [showInquiryModal, setShowInquiryModal] = useState(false);
-  const [inquiryText, setInquiryText] = useState('');
-  const [inquirySent, setInquirySent] = useState(false);
+  const [showInventoryBox, setShowInventoryBox] = useState(false);
 
+  // Requests Registry
+  const [requestsList, setRequestsList] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+
+  // UI state
   const [loading, setLoading] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [submittedId, setSubmittedId] = useState(null);
-  const [error, setError] = useState('');
-
-  const [myRequests, setMyRequests] = useState([]);
-  const [activeTab, setActiveTab] = useState('new');
-
-  const isSupply = form.operationType === 'توريدات';
+  const [submitting, setSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
-    if (isSupply) fetchInventory();
-  }, [isSupply]);
-
-  useEffect(() => {
-    fetchMyRequests();
+    fetchRequests();
   }, []);
 
-  const fetchInventory = async (search = '') => {
-    try {
-      const res = await axios.get('/api/warehouse/inventory', { params: search ? { search } : {} });
-      setInventory(res.data || []);
-    } catch (err) { console.error(err); }
-  };
+  useEffect(() => {
+    // When operation type changes, default tender method & default split awarding
+    const availableMethods = TENDER_METHODS_MAP[formData.operationType] || [];
+    const isSupply = formData.operationType === 'توريدات';
 
-  const fetchMyRequests = async () => {
+    setFormData(prev => ({
+      ...prev,
+      tenderMethodSelected: availableMethods.includes(prev.tenderMethodSelected) ? prev.tenderMethodSelected : availableMethods[0],
+      allowSplitAwarding: isSupply ? true : false,
+      technicalEvaluationMethod: prev.technicalEvaluationMethod || (isSupply ? 'نظام نقاط' : 'مطابق أو غير مطابق')
+    }));
+  }, [formData.operationType]);
+
+  // Recalculate authority whenever method or estimatedValue changes
+  const computedAuthority = formData.tenderMethodSelected && formData.estimatedValue
+    ? getApprovalAuthority(formData.tenderMethodSelected, formData.estimatedValue)
+    : 'رئيس مجلس الإدارة';
+
+  const computedSymbol = formData.operationType && formData.tenderMethodSelected
+    ? (METHOD_SYMBOLS[formData.operationType]?.[formData.tenderMethodSelected] || '-')
+    : '-';
+
+  const isPointsSystem = formData.technicalEvaluationMethod === 'نظام نقاط';
+
+  const fetchRequests = async () => {
+    setLoading(true);
     try {
       const res = await axios.get('/api/needs-requests');
-      setMyRequests(res.data || []);
-    } catch (err) { console.error(err); }
-  };
-
-  const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    setForm(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
-  };
-
-  const handleInventorySearch = (e) => {
-    setInventorySearch(e.target.value);
-    fetchInventory(e.target.value);
-  };
-
-  const handleSendInquiry = async () => {
-    if (!inquiryText.trim()) return;
-    try {
-      await axios.post('/api/warehouse/inquiry', { requestId: 0, inquiryText });
-      setInquirySent(true);
-      setShowInquiryModal(false);
-      setInquiryText('');
+      setRequestsList(res.data || []);
     } catch (err) {
-      alert('حدث خطأ في إرسال الاستفسار');
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!form.operationName || !form.requestingDepartment) {
-      setError('برجاء تعبئة اسم العملية والجهة الطالبة');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const res = await axios.post('/api/needs-requests/submit', form);
-      setSubmittedId(res.data.requestId);
-      setSubmitted(true);
-      fetchMyRequests();
-    } catch (err) {
-      setError(err.response?.data?.error || 'حدث خطأ في إرسال الطلب');
+      console.error('Error fetching needs requests:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  const resetForm = () => {
-    setSubmitted(false);
-    setSubmittedId(null);
-    setInquirySent(false);
-    setForm({ operationName: '', operationType: 'تعاقدات', requestingDepartment: '', executionDuration: '', specsAndConditions: '', requiresSample: false, sampleDetails: '', fiscalYear: '2025/2026' });
+  const fetchInventory = async (search = '') => {
+    try {
+      const res = await axios.get('/api/warehouse/inventory', { params: search ? { search } : {} });
+      setInventory(res.data || []);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const statusColor = (s) => ({
-    'طلب جديد': 'bg-slate-100 text-slate-600',
-    'في انتظار المالية': 'bg-amber-100 text-amber-700',
-    'في انتظار السلطة': 'bg-blue-100 text-blue-700',
-    'معتمد': 'bg-emerald-100 text-emerald-700',
-    'مرفوض': 'bg-rose-100 text-rose-700',
-  }[s] || 'bg-slate-100 text-slate-600');
+  const handleInputChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
 
-  /* ---- Success Screen ---- */
-  if (submitted) {
-    return (
-      <div className="max-w-xl mx-auto text-center space-y-6 py-16" dir="rtl">
-        <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
-          <CheckCircle2 className="w-10 h-10 text-emerald-600" />
-        </div>
-        <h2 className="text-2xl font-bold text-slate-800">تم الإرسال بنجاح!</h2>
-        <p className="text-slate-500">طلب رقم <span className="font-black text-sky-600">#{submittedId}</span> أُرسل للإدارة المالية.</p>
-        <WorkflowBar currentStep={2} />
-        <div className="flex gap-3 justify-center">
-          <button onClick={resetForm} className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-colors">
-            طلب جديد
-          </button>
-          <button onClick={() => { resetForm(); setActiveTab('my-requests'); }} className="px-6 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">
-            متابعة طلباتي
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // Items Management
+  const handleAddItem = () => {
+    setOperationItems(prev => [
+      ...prev,
+      {
+        description: '',
+        unit: 'عدد',
+        quantity: 1,
+        unitPrice: 0,
+        specs: '',
+        itemMaxScore: 100,
+        itemMinPassingScore: 70,
+        itemCriteria: 'بلد المنشأ والجودة (30 درجة)، الكفاءة التشغيلية (30 درجة)، فترة الضمان والصيانة (25 درجة)، سرعة التوريد (15 درجة)',
+        allowSplit: true,
+        isExpanded: true
+      }
+    ]);
+  };
 
-  /* ---- Main ---- */
+  const handleRemoveItem = (index) => {
+    setOperationItems(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleItemChange = (index, field, val) => {
+    setOperationItems(prev => prev.map((item, idx) => {
+      if (idx !== index) return item;
+      return { ...item, [field]: val };
+    }));
+  };
+
+  const handleToggleExpandItem = (index) => {
+    setOperationItems(prev => prev.map((item, idx) => {
+      if (idx !== index) return item;
+      return { ...item, isExpanded: !item.isExpanded };
+    }));
+  };
+
+  const handleApplyCriteriaToAll = (sourceIndex) => {
+    const src = operationItems[sourceIndex];
+    if (!src) return;
+    setOperationItems(prev => prev.map(item => ({
+      ...item,
+      itemMaxScore: src.itemMaxScore,
+      itemMinPassingScore: src.itemMinPassingScore,
+      itemCriteria: src.itemCriteria,
+      allowSplit: src.allowSplit
+    })));
+    alert('تم تطبيق معايير وشروط البند رقم ' + (sourceIndex + 1) + ' على جميع بنود العملية بنجاح ✓');
+  };
+
+  const handleSumItemsToEstimatedValue = () => {
+    const total = operationItems.reduce((acc, curr) => {
+      const q = parseFloat(curr.quantity) || 0;
+      const p = parseFloat(curr.unitPrice) || 0;
+      return acc + (q * p);
+    }, 0);
+    if (total > 0) {
+      setFormData(prev => ({
+        ...prev,
+        estimatedValue: total,
+        preliminaryReservation: prev.preliminaryReservation || total
+      }));
+    }
+  };
+
+  // Submit Handler
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!formData.operationName.trim()) {
+      setErrorMessage('يرجى إدخال اسم وموضوع العملية في القسم الأول');
+      return;
+    }
+    if (!formData.requestingDepartment) {
+      setErrorMessage('يرجى اختيار الجهة الطالبة في القسم الأول');
+      return;
+    }
+    if (formData.authorityApprovalStatus === 'مرفوض' && !formData.authorityRejectionReason.trim()) {
+      setErrorMessage('في حال رفض الطلب، يجب كتابة سبب الرفض في القسم الثالث إلزامياً');
+      return;
+    }
+
+    setSubmitting(true);
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    const payload = {
+      ...formData,
+      approvalAuthority: formData.approvalAuthority || computedAuthority,
+      operationItems,
+    };
+
+    try {
+      if (editingRequestId) {
+        await axios.put(`/api/needs-requests/${editingRequestId}/comprehensive`, payload);
+        setSuccessMessage('تم تحديث طلب الاحتياج بنجاح!');
+      } else {
+        const res = await axios.post('/api/needs-requests/submit', payload);
+        setSuccessMessage(`تم تسجيل طلب الاحتياج بنجاح برقم: #${res.data.requestId}${res.data.operationNumber ? ` (رقم العملية: ${res.data.operationNumber})` : ''}`);
+      }
+      fetchRequests();
+      resetForm();
+      setActiveTab('list');
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'حدث خطأ في حفظ الطلب');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditRequest = (req) => {
+    setEditingRequestId(req.RequestId);
+    let items = [{
+      description: '',
+      unit: 'عدد',
+      quantity: 1,
+      unitPrice: 0,
+      specs: '',
+      itemMaxScore: 100,
+      itemMinPassingScore: 70,
+      itemCriteria: '',
+      allowSplit: true,
+      isExpanded: false
+    }];
+
+    if (req.OperationItems) {
+      try {
+        const parsed = JSON.parse(req.OperationItems);
+        if (Array.isArray(parsed) && parsed.length > 0) items = parsed;
+      } catch (e) {}
+    }
+
+    setFormData({
+      operationName: req.OperationName || '',
+      operationType: req.OperationType || 'تعاقدات',
+      requestingDepartment: req.RequestingDepartment || '',
+      executionDuration: req.ExecutionDuration || '',
+      fiscalYear: req.FiscalYear || '2025/2026',
+      specsAndConditions: req.SpecsAndConditions || '',
+      requiresSample: Boolean(req.RequiresSample),
+      sampleDetails: req.SampleDetails || '',
+      warehouseBalance: req.WarehouseBalance || 'لا يوجد رصيد بالمخازن',
+
+      technicalEvaluationMethod: req.TechnicalEvaluationMethod || 'مطابق أو غير مطابق',
+      minPassingScore: req.MinPassingScore || 70,
+      allowSplitAwarding: req.AllowSplitAwarding !== undefined ? Boolean(req.AllowSplitAwarding) : (req.OperationType === 'توريدات'),
+      technicalCriteriaNotes: req.TechnicalCriteriaNotes || '',
+
+      tenderMethodSelected: req.TenderMethodSelected || 'مناقصة عامة',
+      estimatedValue: req.EstimatedValue || '',
+      preliminaryReservation: req.PreliminaryReservation || req.InitialReservation || '',
+      reservationTypeNew: req.ReservationTypeNew || 'جاري',
+      budgetHoldReference: req.BudgetHoldReference || '',
+      initialGuaranteePercent: req.InitialGuaranteePercent || 2,
+      submittalType: req.SubmittalType || 'مظروفيين',
+      bookletPrice: req.BookletPrice || '',
+      constructionDivision: req.ConstructionDivision || '',
+      constructionCategory: req.ConstructionCategory || '',
+      operationTerms: req.OperationTerms || '',
+      financialNotes: req.FinancialNotes || '',
+
+      financialApprovalObtained: req.FinancialApprovalObtained !== 0,
+      financialApprovalDate: req.FinancialApprovalDate || new Date().toISOString().split('T')[0],
+      financialApprovalNotes: req.FinancialApprovalNotes || '',
+      approvalAuthority: req.ApprovalAuthority || '',
+      authorityApprovalStatus: req.AuthorityApprovalStatus || (req.WorkflowStatus === 'مرفوض' ? 'مرفوض' : 'معتمد'),
+      authorityApprovalDate: req.AuthorityApprovalDate || new Date().toISOString().split('T')[0],
+      reviewedBy: req.AuthorityReviewedBy || user?.fullName || 'رئيس مجلس الإدارة',
+      authorityRejectionReason: req.AuthorityRejectionReason || '',
+    });
+
+    setOperationItems(items);
+    setActiveTab('form');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDeleteRequest = async (id) => {
+    const reason = prompt('يرجى ذكر سبب حذف وأرشفة طلب الاحتياج:');
+    if (reason === null) return;
+    try {
+      await axios.delete(`/api/needs-requests/${id}`, { data: { reason } });
+      alert('تم نقل طلب الاحتياج إلى الأرشيف بنجاح');
+      fetchRequests();
+    } catch (err) {
+      alert('خطأ: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const resetForm = () => {
+    setEditingRequestId(null);
+    setFormData({
+      operationName: '',
+      operationType: 'تعاقدات',
+      requestingDepartment: '',
+      executionDuration: '',
+      fiscalYear: '2025/2026',
+      specsAndConditions: '',
+      requiresSample: false,
+      sampleDetails: '',
+      warehouseBalance: 'لا يوجد رصيد بالمخازن',
+      technicalEvaluationMethod: 'مطابق أو غير مطابق',
+      minPassingScore: 70,
+      allowSplitAwarding: false,
+      technicalCriteriaNotes: 'المواصفات الفنية والكفاءة (40 نقطة)، سابقة الأعمال والخبرة (30 نقطة)، الضمان والصيانة (20 نقطة)، سرعة التوريد والتنفيذ (10 نقاط)',
+      tenderMethodSelected: 'مناقصة عامة',
+      estimatedValue: '',
+      preliminaryReservation: '',
+      reservationTypeNew: 'جاري',
+      budgetHoldReference: '',
+      initialGuaranteePercent: 2,
+      submittalType: 'مظروفيين',
+      bookletPrice: '',
+      constructionDivision: '',
+      constructionCategory: '',
+      operationTerms: '',
+      financialNotes: '',
+      financialApprovalObtained: true,
+      financialApprovalDate: new Date().toISOString().split('T')[0],
+      financialApprovalNotes: '',
+      approvalAuthority: '',
+      authorityApprovalStatus: 'معتمد',
+      authorityApprovalDate: new Date().toISOString().split('T')[0],
+      reviewedBy: user?.fullName || 'رئيس مجلس الإدارة',
+      authorityRejectionReason: '',
+    });
+    setOperationItems([
+      {
+        description: '',
+        unit: 'عدد',
+        quantity: 1,
+        unitPrice: 0,
+        specs: '',
+        itemMaxScore: 100,
+        itemMinPassingScore: 70,
+        itemCriteria: 'بلد المنشأ والجودة (30 درجة)، الكفاءة التشغيلية (30 درجة)، فترة الضمان والصيانة (25 درجة)، سرعة التوريد (15 درجة)',
+        allowSplit: true,
+        isExpanded: false
+      }
+    ]);
+    setErrorMessage('');
+  };
+
+  // Filtered requests list
+  const filteredRequests = requestsList.filter(req => {
+    const matchesSearch =
+      (req.OperationName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (req.RequestingDepartment || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (req.FinancialOperationNumber || '').toLowerCase().includes(searchQuery.toLowerCase());
+
+    if (!matchesSearch) return false;
+
+    if (statusFilter === 'APPROVED') {
+      return req.WorkflowStatus === 'معتمد' || req.AuthorityApprovalStatus === 'معتمد';
+    }
+    if (statusFilter === 'REJECTED') {
+      return req.WorkflowStatus === 'مرفوض' || req.AuthorityApprovalStatus === 'مرفوض';
+    }
+    if (statusFilter === 'PENDING') {
+      return (req.WorkflowStatus !== 'معتمد' && req.WorkflowStatus !== 'مرفوض') ||
+             (req.AuthorityApprovalStatus !== 'معتمد' && req.AuthorityApprovalStatus !== 'مرفوض');
+    }
+    return true;
+  });
+
   return (
-    <div className="space-y-5" dir="rtl">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-600 to-sky-500 flex items-center justify-center shadow-md">
-            <ClipboardList className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-800">طلب الاحتياج</h1>
-            <p className="text-xs text-slate-500">تقديم طلب جديد وإرساله للمراجعة المالية</p>
+    <div className="space-y-6" dir="rtl">
+      {/* Top Header */}
+      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 rounded-3xl shadow-xl border border-slate-800 flex items-center justify-between flex-wrap gap-4">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-600/40 border border-indigo-400/30 flex items-center justify-center shadow-lg shadow-indigo-600/20">
+              <ClipboardList className="w-6 h-6 text-indigo-300" />
+            </div>
+            <div>
+              <h1 className="text-xl md:text-2xl font-black">طلب الاحتياج والاعتماد الشامل</h1>
+              <p className="text-xs text-indigo-200/80">
+                تسجيل بيانات الاحتياج، نظام التقييم الفني (نقاط / مطابق)، المراجعة المالية، وتوثيق الموافقات الورقية واعتماد السلطة
+              </p>
+            </div>
           </div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => setActiveTab('new')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'new' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-            طلب جديد
+
+        {/* Tab switchers */}
+        <div className="flex items-center bg-slate-800/80 p-1.5 rounded-2xl border border-slate-700">
+          <button
+            type="button"
+            onClick={() => setActiveTab('form')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'form'
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            <Plus className="w-4 h-4" />
+            <span>{editingRequestId ? `تعديل طلب رقم #${editingRequestId}` : 'تسجيل طلب متكامل'}</span>
           </button>
-          <button onClick={() => { setActiveTab('my-requests'); fetchMyRequests(); }} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'my-requests' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-            الطلبات ({myRequests.length})
+          <button
+            type="button"
+            onClick={() => { setActiveTab('list'); fetchRequests(); }}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'list'
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            <Eye className="w-4 h-4" />
+            <span>سجل ومتابعة الطلبات ({requestsList.length})</span>
           </button>
         </div>
       </div>
 
-      <WorkflowBar currentStep={1} />
-
-      {/* My Requests Tab */}
-      {activeTab === 'my-requests' ? (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2"><Eye className="w-4 h-4 text-slate-500" /> متابعة الطلبات المقدمة</h2>
-            <button onClick={fetchMyRequests} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"><RotateCcw className="w-3.5 h-3.5" /></button>
+      {/* Global Alerts */}
+      {successMessage && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-emerald-800 text-sm font-bold shadow-sm animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <span>{successMessage}</span>
           </div>
-          <div className="divide-y divide-slate-100">
-            {myRequests.length === 0 ? (
-              <div className="p-10 text-center text-slate-400 text-sm">لا توجد طلبات مقدمة حتى الآن</div>
-            ) : myRequests.map(req => (
-              <div key={req.RequestId} className="p-4 hover:bg-slate-50 transition-colors">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1 flex-1 min-w-0">
-                    <div className="font-bold text-slate-800 text-sm truncate">{req.OperationName}</div>
-                    <div className="text-xs text-slate-500">{req.RequestingDepartment} ← {req.OperationType}</div>
-                    {req.FinancialOperationNumber && (
-                      <div className="text-xs text-sky-600 font-mono font-bold">رقم العملية: {req.FinancialOperationNumber}</div>
-                    )}
-                    {req.ApprovalAuthority && (
-                      <div className="text-xs text-slate-500">السلطة: {req.ApprovalAuthority}</div>
-                    )}
-                    {req.AuthorityRejectionReason && (
-                      <div className="text-xs text-rose-600 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200">سبب الرفض: {req.AuthorityRejectionReason}</div>
-                    )}
-                  </div>
-                  <div className="text-left space-y-1 shrink-0">
-                    <span className={`text-xs px-2.5 py-1 rounded-full font-bold block text-center ${statusColor(req.WorkflowStatus || 'طلب جديد')}`}>
-                      {req.WorkflowStatus || 'طلب جديد'}
-                    </span>
-                    <div className="text-[10px] text-slate-400 text-center">{req.CreatedAt ? new Date(req.CreatedAt).toLocaleDateString('ar-EG') : ''}</div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <button onClick={() => setSuccessMessage('')} className="text-emerald-600 hover:text-emerald-800"><X className="w-4 h-4" /></button>
         </div>
-      ) : (
-        /* New Request Form */
-        <form onSubmit={handleSubmit} className="space-y-5">
+      )}
 
-          {/* Operation Type */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-            <h2 className="font-bold text-slate-700 text-sm mb-3 flex items-center gap-2"><Package className="w-4 h-4 text-indigo-500" /> نوع العملية</h2>
-            <div className="grid grid-cols-3 gap-3">
-              {OPERATION_TYPES.map(type => (
-                <button key={type.value} type="button"
-                  onClick={() => setForm(prev => ({ ...prev, operationType: type.value }))}
-                  className={`p-4 rounded-xl border-2 font-bold text-sm transition-all ${form.operationType === type.value ? type.active + ' shadow-md scale-[1.02]' : type.color}`}>
-                  {type.label}
-                </button>
-              ))}
+      {errorMessage && (
+        <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-center justify-between text-rose-800 text-sm font-bold shadow-sm">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <button onClick={() => setErrorMessage('')} className="text-rose-600 hover:text-rose-800"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 1: COMPREHENSIVE 3-SECTION FORM                                        */}
+      {/* ========================================================================= */}
+      {activeTab === 'form' && (
+        <form onSubmit={handleSubmit} className="space-y-6">
+
+          {/* Stepper Banner */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="bg-white border-2 border-indigo-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black text-sm shrink-0">1</div>
+              <div>
+                <div className="text-xs font-bold text-slate-800">القسم الأول: بيانات الاحتياج والتقييم الفني</div>
+                <div className="text-[11px] text-slate-500">اسم العملية، نظام التقييم (نقاط/مطابق)، وقابلية التجزئة</div>
+              </div>
+            </div>
+
+            <div className="bg-white border-2 border-emerald-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black text-sm shrink-0">2</div>
+              <div>
+                <div className="text-xs font-bold text-slate-800">القسم الثاني: البيانات والمراجعة المالية</div>
+                <div className="text-[11px] text-slate-500">طريقة الطرح، القيمة، وجدول البنود مع شروط ومعايير كل بند</div>
+              </div>
+            </div>
+
+            <div className="bg-white border-2 border-purple-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-purple-600 text-white flex items-center justify-center font-black text-sm shrink-0">3</div>
+              <div>
+                <div className="text-xs font-bold text-slate-800">القسم الثالث: الموافقات الورقية والاعتماد</div>
+                <div className="text-[11px] text-slate-500">توثيق أخذ الموافقة المالية واعتماد السلطة المختصة</div>
+              </div>
             </div>
           </div>
 
-          {/* Basic Info */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
-            <h2 className="font-bold text-slate-700 text-sm flex items-center gap-2"><FileText className="w-4 h-4 text-indigo-500" /> بيانات الطلب</h2>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <label className="block text-xs font-bold text-slate-600 mb-1.5">اسم العملية <span className="text-rose-500">*</span></label>
-                <input type="text" name="operationName" value={form.operationName} onChange={handleChange} required
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400"
-                  placeholder="أدخل اسم العملية بالكامل..." />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1.5">الجهة الطالبة <span className="text-rose-500">*</span></label>
-                <select name="requestingDepartment" value={form.requestingDepartment} onChange={handleChange} required
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white">
-                  <option value="">اختر الإدارة...</option>
-                  {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1.5">مدة العملية</label>
-                <input type="text" name="executionDuration" value={form.executionDuration} onChange={handleChange}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                  placeholder="مثال: 3 أشهر، 60 يوم..." />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1.5">العام المالي</label>
-                <input type="text" name="fiscalYear" value={form.fiscalYear} onChange={handleChange}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                  placeholder="2025/2026" />
+          {/* --------------------------------------------------------------------- */}
+          {/* SECTION 1: NEEDS REQUEST, SPECS & TECHNICAL EVALUATION SYSTEM         */}
+          {/* --------------------------------------------------------------------- */}
+          <div className="bg-white rounded-3xl border border-indigo-100 shadow-sm overflow-hidden">
+            <div className="bg-gradient-to-r from-indigo-50/80 via-white to-indigo-50/40 p-5 border-b border-indigo-100 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-600/30">
+                  <ClipboardList className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-indigo-100 text-indigo-800 text-[10px] font-black px-2 py-0.5 rounded-full">القسم الأول</span>
+                    <h2 className="text-base font-black text-slate-800">بيانات طلب الاحتياج ونظام التقييم الفني</h2>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">البيانات الإدارية العامة، نظام التقييم الفني المطلوب (نقاط / مطابق)، وقابلية التجزئة</p>
+                </div>
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1.5">كراسة الشروط والمواصفات</label>
-              <textarea name="specsAndConditions" value={form.specsAndConditions} onChange={handleChange} rows={4}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
-                placeholder="اكتب هنا تفاصيل المتطلبات والمواصفات الفنية المطلوبة..." />
-            </div>
-
-            <label className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl border border-amber-200 cursor-pointer">
-              <input type="checkbox" name="requiresSample" checked={form.requiresSample} onChange={handleChange}
-                className="w-4 h-4 accent-amber-600" />
-              <span className="text-sm font-bold text-amber-800">يتطلب تقديم عينة</span>
-            </label>
-            {form.requiresSample && (
+            <div className="p-6 space-y-5">
+              {/* Operation Type Selection */}
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1.5">تفاصيل العينة المطلوبة</label>
-                <textarea name="sampleDetails" value={form.sampleDetails} onChange={handleChange} rows={2}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
-                  placeholder="اكتب مواصفات العينة المطلوبة..." />
-              </div>
-            )}
-          </div>
-
-          {/* Warehouse Section */}
-          {isSupply && (
-            <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="font-bold text-emerald-800 text-sm flex items-center gap-2"><Warehouse className="w-4 h-4 text-emerald-600" /> التحقق من الرصيد المخزني</h2>
-                <span className="text-xs bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full font-bold">للتوريدات فقط</span>
-              </div>
-              <p className="text-xs text-slate-500">ابحث أولاً عما تحتاجه في المخزن. إذا لم يكن متاحاً أرسل استفساراً لإدارة المخازن.</p>
-
-              <div className="relative">
-                <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input type="text" value={inventorySearch} onChange={handleInventorySearch}
-                  className="w-full pr-9 pl-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                  placeholder="ابحث عن منتج في المخزن..." />
-              </div>
-
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <div className="max-h-52 overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <thead className="bg-slate-50 sticky top-0">
-                      <tr>
-                        <th className="px-3 py-2 text-right font-bold text-slate-600">المنتج</th>
-                        <th className="px-3 py-2 text-center font-bold text-slate-600">الوحدة</th>
-                        <th className="px-3 py-2 text-center font-bold text-slate-600">الرصيد</th>
-                        <th className="px-3 py-2 text-center font-bold text-slate-600">الموقع</th>
-                        <th className="px-3 py-2 text-center font-bold text-slate-600">الحالة</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {inventory.length === 0 ? (
-                        <tr><td colSpan={5} className="p-6 text-center text-slate-400">لا توجد منتجات مطابقة</td></tr>
-                      ) : inventory.map(p => (
-                        <tr key={p.ProductId} className="hover:bg-slate-50">
-                          <td className="px-3 py-2 font-medium text-slate-800">{p.ProductName}</td>
-                          <td className="px-3 py-2 text-center text-slate-600">{p.Unit}</td>
-                          <td className="px-3 py-2 text-center font-bold text-slate-800">{p.CurrentStock}</td>
-                          <td className="px-3 py-2 text-center text-slate-500 text-[11px]">{p.Location}</td>
-                          <td className="px-3 py-2 text-center">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              p.CurrentStock > p.MinimumStock ? 'bg-emerald-100 text-emerald-700' :
-                              p.CurrentStock > 0 ? 'bg-amber-100 text-amber-700' :
-                              'bg-rose-100 text-rose-700'
-                            }`}>
-                              {p.CurrentStock > p.MinimumStock ? 'متوفر' : p.CurrentStock > 0 ? 'منخفض' : 'نفذ'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <label className="block text-xs font-black text-slate-700 mb-2">نوع العملية *</label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {OPERATION_TYPES.map(op => {
+                    const isSelected = formData.operationType === op.value;
+                    return (
+                      <button
+                        key={op.value}
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, operationType: op.value }))}
+                        className={`p-3.5 rounded-2xl border-2 text-xs font-black transition-all flex items-center justify-between ${
+                          isSelected ? op.active + ' shadow-md' : op.color + ' hover:border-slate-400'
+                        }`}
+                      >
+                        <span>{op.label}</span>
+                        {isSelected && <Check className="w-4 h-4 shrink-0" />}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {inquirySent ? (
-                <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl border border-blue-200">
-                  <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+              {/* Main Fields Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">اسم وموضوع العملية *</label>
+                  <input
+                    type="text"
+                    required
+                    name="operationName"
+                    value={formData.operationName}
+                    onChange={handleInputChange}
+                    placeholder="مثال: توريد طلمبات غاطسة ومهمات كهروميكانيكية لمحطة مياه النزهة"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">الجهة / الإدارة الطالبة *</label>
+                  <select
+                    required
+                    name="requestingDepartment"
+                    value={formData.requestingDepartment}
+                    onChange={handleInputChange}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium"
+                  >
+                    <option value="">-- اختر الإدارة الطالبة --</option>
+                    {DEPARTMENTS.map(dept => (
+                      <option key={dept} value={dept}>{dept}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">العام المالي المعتمد</label>
+                  <input
+                    type="text"
+                    name="fiscalYear"
+                    value={formData.fiscalYear}
+                    onChange={handleInputChange}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">مدة التنفيذ أو التوريد</label>
+                  <input
+                    type="text"
+                    name="executionDuration"
+                    value={formData.executionDuration}
+                    onChange={handleInputChange}
+                    placeholder="مثال: 3 أشهر / 90 يوماً"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">موقف رصيد المخزن</label>
+                  <input
+                    type="text"
+                    name="warehouseBalance"
+                    value={formData.warehouseBalance}
+                    onChange={handleInputChange}
+                    placeholder="مثال: لا يوجد رصيد بالمخازن"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* TECHNICAL EVALUATION SYSTEM (Pass/Fail vs Points) */}
+              <div className="p-4 bg-indigo-50/60 border-2 border-indigo-200 rounded-2xl space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Award className="w-5 h-5 text-indigo-700" />
+                    <div>
+                      <span className="text-xs font-black text-indigo-900">نظام التقييم الفني المعتمد للعملية</span>
+                      <p className="text-[11px] text-indigo-700/80">حدد ما إذا كان البت الفني بنظام النقاط والدرجات أو تقرير فني (مطابق / غير مطابق)</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-indigo-200 text-indigo-900 px-2.5 py-0.5 rounded-full font-bold">
+                    قانون 182 ولائحته
+                  </span>
+                </div>
+
+                {/* 2 Main Evaluation System Choices */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, technicalEvaluationMethod: 'مطابق أو غير مطابق' }))}
+                    className={`p-3.5 rounded-2xl border-2 text-right transition-all flex items-start gap-3 ${
+                      formData.technicalEvaluationMethod === 'مطابق أو غير مطابق'
+                        ? 'bg-white border-indigo-600 shadow-md ring-2 ring-indigo-500/20'
+                        : 'bg-white/60 border-slate-200 hover:border-indigo-300 text-slate-600'
+                    }`}
+                  >
+                    <div className={`w-5 h-5 rounded-full border-2 mt-0.5 flex items-center justify-center shrink-0 ${
+                      formData.technicalEvaluationMethod === 'مطابق أو غير مطابق' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300'
+                    }`}>
+                      {formData.technicalEvaluationMethod === 'مطابق أو غير مطابق' && <Check className="w-3 h-3 font-bold" />}
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-slate-900">1. تقرير فني (مطابق أو غير مطابق للمواصفات)</div>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                        يتم فحص العطاءات وقبول المطابق للشروط والمواصفات الفنية واستبعاد غير المطابق، والترسية على الأقل سعراً من المقبولين.
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, technicalEvaluationMethod: 'نظام نقاط' }))}
+                    className={`p-3.5 rounded-2xl border-2 text-right transition-all flex items-start gap-3 ${
+                      formData.technicalEvaluationMethod === 'نظام نقاط'
+                        ? 'bg-white border-indigo-600 shadow-md ring-2 ring-indigo-500/20'
+                        : 'bg-white/60 border-slate-200 hover:border-indigo-300 text-slate-600'
+                    }`}
+                  >
+                    <div className={`w-5 h-5 rounded-full border-2 mt-0.5 flex items-center justify-center shrink-0 ${
+                      formData.technicalEvaluationMethod === 'نظام نقاط' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300'
+                    }`}>
+                      {formData.technicalEvaluationMethod === 'نظام نقاط' && <Check className="w-3 h-3 font-bold" />}
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-slate-900">2. نظام النقاط الفنية (درجات ومعايير تقييم)</div>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                        يتم وضع درجات ومعايير محددة لكل بند وللعملية ككل، ويشترط اجتياز الحد الأدنى لدرجات القبول الفني لفتح المظروف المالي.
+                      </p>
+                    </div>
+                  </button>
+                </div>
+
+                {/* If POINTS SYSTEM: Show Minimum Passing Score & Overall Criteria */}
+                {isPointsSystem && (
+                  <div className="p-4 bg-white border border-indigo-200 rounded-2xl space-y-3 animate-fadeIn">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          الحد الأدنى لدرجات القبول الفني للعملية ككل (%) *
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="50"
+                            max="100"
+                            name="minPassingScore"
+                            value={formData.minPassingScore}
+                            onChange={handleInputChange}
+                            className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm font-mono font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                          />
+                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">من 100</span>
+                        </div>
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          معايير التقييم الفني العامة وأوزانها النسبية للعملية
+                        </label>
+                        <input
+                          type="text"
+                          name="technicalCriteriaNotes"
+                          value={formData.technicalCriteriaNotes}
+                          onChange={handleInputChange}
+                          placeholder="مثال: الكفاءة الفنية 40%، سابقة الأعمال 30%، الضمان 20%، سرعة التوريد 10%"
+                          className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-indigo-800 bg-indigo-50 p-2.5 rounded-xl font-medium flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span>
+                        ملاحظة: في القسم الثاني بجدول البنود، يمكنك تحديد مواصفات واشتراطات كل بند، والدرجات ومعايير التقييم الخاصة بكل بند على حدة.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* SPLIT AWARDING (قابلة للتجزئة والترسية لكل بند لمورد مختلف) */}
+                <div className="p-3.5 bg-white border border-indigo-200 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-bold text-blue-800">تم إرسال الاستفسار لإدارة المخازن</p>
-                    <p className="text-xs text-blue-500 mt-0.5">في انتظار الرد من إدارة المخازن...</p>
+                    <div className="flex items-center gap-2">
+                      <CheckSquare className="w-4 h-4 text-indigo-600" />
+                      <span className="text-xs font-black text-slate-800">
+                        قابلية التجزئة والترسية المنفصلة للبند (Split Awarding):
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                      {formData.operationType === 'توريدات' 
+                        ? 'في التوريدات: يجوز قانوناً تجزئة الترسية وترسية كل بند على مورد مختلف بأفضل العروض المقبولة فنياً وأقلها سعراً.'
+                        : 'تحديد ما إذا كانت العملية تقبل التجزئة والترسية على أكثر من فائز، أم يتم إسنادها كصفقة واحدة.'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, allowSplitAwarding: true }))}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        formData.allowSplitAwarding
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      تقبل التجزئة والترسية لكل بند ✓
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, allowSplitAwarding: false }))}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        !formData.allowSplitAwarding
+                          ? 'bg-slate-800 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      صفقة واحدة غير مجزأة
+                    </button>
                   </div>
                 </div>
-              ) : (
-                <button type="button" onClick={() => setShowInquiryModal(true)}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 text-white rounded-xl text-xs font-bold hover:bg-amber-600 transition-colors">
-                  <MessageSquare className="w-4 h-4" /> إرسال استفسار للمخازن
+              </div>
+
+              {/* Specs & Conditions */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">المواصفات الفنية والاشتراطات العامة للعملية</label>
+                <textarea
+                  rows={2}
+                  name="specsAndConditions"
+                  value={formData.specsAndConditions}
+                  onChange={handleInputChange}
+                  placeholder="المواصفات الفنية والمقاييس والشهادات العامة المطلوبة للعملية ككل..."
+                  className="w-full p-3.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+
+              {/* Sample Requirements Checkbox */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    name="requiresSample"
+                    checked={formData.requiresSample}
+                    onChange={handleInputChange}
+                    className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <div>
+                    <span className="text-xs font-black text-slate-800">هل تتطلب العملية تقديم عينات فنية للاختبار والمعاينة؟</span>
+                    <p className="text-[11px] text-slate-500">تقديم نموذج عينة لاختباره بالمعامل كشرط للقبول الفني</p>
+                  </div>
+                </label>
+
+                {formData.requiresSample && (
+                  <input
+                    type="text"
+                    name="sampleDetails"
+                    value={formData.sampleDetails}
+                    onChange={handleInputChange}
+                    placeholder="حدد مواصفات العينة المطلوبة وعددها وميعاد تسليمها..."
+                    className="flex-1 w-full md:w-auto px-4 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                )}
+              </div>
+
+              {/* Optional Warehouse Quick Search if supply */}
+              {formData.operationType === 'توريدات' && (
+                <div className="p-3.5 bg-sky-50/70 border border-sky-200 rounded-2xl flex items-center justify-between flex-wrap gap-2 text-xs">
+                  <div className="flex items-center gap-2 text-sky-800 font-bold">
+                    <Warehouse className="w-4 h-4 text-sky-600" />
+                    <span>عملية توريدات: يمكنك التحقق السريع من رصيد المستودع والمخازن</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setShowInventoryBox(!showInventoryBox); if (!inventory.length) fetchInventory(); }}
+                    className="px-3 py-1.5 bg-sky-600 text-white rounded-xl text-xs font-bold hover:bg-sky-700 transition-colors shadow-sm"
+                  >
+                    {showInventoryBox ? 'إخفاء فحص المخزن' : 'فحص المخزن أو الاستفسار'}
+                  </button>
+                </div>
+              )}
+
+              {showInventoryBox && (
+                <div className="p-4 bg-white border border-sky-300 rounded-2xl space-y-3 shadow-inner">
+                  <div className="flex items-center gap-2">
+                    <Search className="w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="بحث في المخازن باسم الصنف أو الكود..."
+                      value={inventorySearch}
+                      onChange={(e) => { setInventorySearch(e.target.value); fetchInventory(e.target.value); }}
+                      className="flex-1 p-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+                  {inventory.length > 0 ? (
+                    <div className="max-h-40 overflow-y-auto divide-y text-xs border rounded-xl">
+                      {inventory.map(item => (
+                        <div key={item.ProductId} className="p-2.5 flex justify-between items-center hover:bg-sky-50">
+                          <div>
+                            <span className="font-bold text-slate-800">{item.ProductName}</span>
+                            <span className="text-[10px] text-slate-400 mr-2 font-mono">({item.ProductCode})</span>
+                          </div>
+                          <div className="font-mono font-bold text-emerald-700">
+                            الرصيد: {item.CurrentStock} {item.Unit}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 text-center py-2">لا توجد أصناف متطابقة في المخزن</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* --------------------------------------------------------------------- */}
+          {/* SECTION 2: FINANCIAL REVIEW, PRICING & ITEMS WITH SPECS PER ITEM      */}
+          {/* --------------------------------------------------------------------- */}
+          <div className="bg-white rounded-3xl border border-emerald-100 shadow-sm overflow-hidden">
+            <div className="bg-gradient-to-r from-emerald-50/80 via-white to-emerald-50/40 p-5 border-b border-emerald-100 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/30">
+                  <DollarSign className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full">القسم الثاني</span>
+                    <h2 className="text-base font-black text-slate-800">البيانات والمراجعة المالية وبنود العملية</h2>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">طريقة الطرح، القيمة، وجدول البنود مع شروط ومعايير التقييم الفني لكل بند</p>
+                </div>
+              </div>
+
+              {/* Live Calculation Pill */}
+              <div className="flex items-center gap-3 bg-emerald-950 text-emerald-300 px-4 py-2 rounded-2xl font-mono text-xs shadow-sm">
+                <div>
+                  <span className="text-slate-400">رمز العملية: </span>
+                  <span className="font-black text-white">{computedSymbol}</span>
+                </div>
+                <div className="h-3 w-px bg-emerald-800" />
+                <div>
+                  <span className="text-slate-400">السلطة المختصة: </span>
+                  <span className="font-black text-amber-300">{computedAuthority}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">طريقة الطرح المقترحة *</label>
+                  <select
+                    name="tenderMethodSelected"
+                    value={formData.tenderMethodSelected}
+                    onChange={handleInputChange}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                  >
+                    {(TENDER_METHODS_MAP[formData.operationType] || []).map(method => (
+                      <option key={method} value={method}>{method}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">القيمة التقديرية الإجمالية (ج.م) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    name="estimatedValue"
+                    value={formData.estimatedValue}
+                    onChange={handleInputChange}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">قيمة الحجز المالي المبدئي (ج.م)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    name="preliminaryReservation"
+                    value={formData.preliminaryReservation}
+                    onChange={handleInputChange}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">نوع الحجز المالي</label>
+                  <select
+                    name="reservationTypeNew"
+                    value={formData.reservationTypeNew}
+                    onChange={handleInputChange}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                  >
+                    <option value="جاري">موازنة جارية</option>
+                    <option value="استثماري">موازنة استثمارية</option>
+                    <option value="موازنة الشركة">موازنة الشركة التقديرية</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">رقم مذكرة حجز الموازنة</label>
+                  <input
+                    type="text"
+                    name="budgetHoldReference"
+                    value={formData.budgetHoldReference}
+                    onChange={handleInputChange}
+                    placeholder="مثال: م.ح/2025/114"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">نسبة التأمين الابتدائي (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="10"
+                    step="0.5"
+                    name="initialGuaranteePercent"
+                    value={formData.initialGuaranteePercent}
+                    onChange={handleInputChange}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">طريقة تقديم العطاءات</label>
+                  <select
+                    name="submittalType"
+                    value={formData.submittalType}
+                    onChange={handleInputChange}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                  >
+                    <option value="مظروفيين">مظروفين (فني ومالي منفصلين)</option>
+                    <option value="مظروف واحد">مظروف واحد مدمج</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">ثمن كراسة الشروط التقديري (ج.م)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    name="bookletPrice"
+                    value={formData.bookletPrice}
+                    onChange={handleInputChange}
+                    placeholder="مثال: 500"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                {formData.operationType === 'تعاقدات' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">شعبة وفئة تصنيف الاتحاد</label>
+                    <input
+                      type="text"
+                      name="constructionDivision"
+                      value={formData.constructionDivision}
+                      onChange={handleInputChange}
+                      placeholder="مثال: شبكات المياه والصرف - فئة رابعة"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Operation Items / Bill of Quantities with Tech Specs per Item */}
+              <div className="bg-slate-50 p-4 rounded-3xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-5 h-5 text-emerald-600" />
+                    <div>
+                      <span className="text-xs font-black text-slate-800">
+                        جدول بنود وكميات العملية وشروط ومعايير تقييم كل بند
+                      </span>
+                      <p className="text-[11px] text-slate-500">
+                        {isPointsSystem
+                          ? 'نظام نقاط: حدد مواصفات البند الفنية والدرجات ومعايير التقييم الخاصة بكل بند'
+                          : 'تقرير فني: حدد مواصفات واشتراطات كل بند للتحقق من المطابقة الفنية'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSumItemsToEstimatedValue}
+                      className="text-xs bg-emerald-100 text-emerald-800 hover:bg-emerald-200 px-3 py-1.5 rounded-xl font-bold transition-colors"
+                      title="تجميع إجمالي أسعار البنود وتحديث القيمة التقديرية للعملية"
+                    >
+                      حساب الإجمالي للقيمة التقديرية ⚡
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAddItem}
+                      className="flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>إضافة بند</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {operationItems.map((item, idx) => {
+                    const rowTotal = (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0);
+                    return (
+                      <div key={idx} className="bg-white border border-slate-200 rounded-2xl p-3.5 space-y-3 shadow-xs">
+                        {/* Main Item Row */}
+                        <div className="grid grid-cols-12 gap-2 items-center text-xs">
+                          <div className="col-span-1 text-center font-black text-slate-500">
+                            #{idx + 1}
+                          </div>
+
+                          <div className="col-span-4">
+                            <label className="block text-[10px] text-slate-500 mb-0.5">بيان وتوصيف البند</label>
+                            <input
+                              type="text"
+                              value={item.description}
+                              onChange={(e) => handleItemChange(idx, 'description', e.target.value)}
+                              placeholder="اسم ووصف البند..."
+                              className="w-full p-2 border rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-[10px] text-slate-500 mb-0.5">الوحدة</label>
+                            <input
+                              type="text"
+                              value={item.unit}
+                              onChange={(e) => handleItemChange(idx, 'unit', e.target.value)}
+                              className="w-full p-2 border rounded-xl text-xs text-center outline-none"
+                            />
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-[10px] text-slate-500 mb-0.5">الكمية</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.quantity}
+                              onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)}
+                              className="w-full p-2 border rounded-xl text-xs font-mono text-center outline-none"
+                            />
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-[10px] text-slate-500 mb-0.5">السعر التقديري</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={item.unitPrice}
+                              onChange={(e) => handleItemChange(idx, 'unitPrice', e.target.value)}
+                              className="w-full p-2 border rounded-xl text-xs font-mono text-center outline-none font-bold"
+                            />
+                          </div>
+
+                          <div className="col-span-1 text-center">
+                            {operationItems.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveItem(idx)}
+                                className="text-rose-500 hover:text-rose-700 p-1.5 rounded-lg hover:bg-rose-50 transition-colors"
+                                title="حذف البند"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Sub Row: Total & Expand Toggle */}
+                        <div className="flex items-center justify-between pt-1 border-t text-xs">
+                          <div className="flex items-center gap-4">
+                            <div>
+                              <span className="text-slate-500">إجمالي البند: </span>
+                              <span className="font-mono font-black text-emerald-700">{rowTotal.toLocaleString()} ج.م</span>
+                            </div>
+
+                            {/* Status tag */}
+                            {isPointsSystem ? (
+                              <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-md font-bold">
+                                تقييم بنظام النقاط: {item.itemMinPassingScore || 70} / {item.itemMaxScore || 100} درجة
+                              </span>
+                            ) : (
+                              <span className="text-[10px] bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-md font-bold">
+                                فحص مطابق / غير مطابق
+                              </span>
+                            )}
+
+                            {formData.allowSplitAwarding && (
+                              <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold">
+                                يقبل الترسية المستقلة لمورد منفصل ✓
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleExpandItem(idx)}
+                            className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors"
+                          >
+                            <span>{item.isExpanded ? 'إخفاء الشروط الفنية والمعايير' : 'تحديد شروط ومعايير تقييم البند'}</span>
+                            {item.isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+
+                        {/* Collapsible Detailed Tech Specs & Points per Item */}
+                        {item.isExpanded && (
+                          <div className="p-3.5 bg-slate-50 border border-indigo-200 rounded-xl space-y-3 text-xs animate-fadeIn">
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                                المواصفات والاشتراطات الفنية الخاصة بهذا البند:
+                              </label>
+                              <textarea
+                                rows={2}
+                                value={item.specs}
+                                onChange={(e) => handleItemChange(idx, 'specs', e.target.value)}
+                                placeholder="المواصفات الفنية المعتمدة للبند، الكفاءة، بلد المنشأ، أو الشهادات المطلوبة لهذا الصنف..."
+                                className="w-full p-2 border rounded-xl text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                              />
+                            </div>
+
+                            {/* If Points System: Specific Scores & Criteria for this item */}
+                            {isPointsSystem && (
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-white p-3 rounded-xl border border-slate-200">
+                                <div>
+                                  <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                                    الدرجة القصوى للبند
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="10"
+                                    max="100"
+                                    value={item.itemMaxScore}
+                                    onChange={(e) => handleItemChange(idx, 'itemMaxScore', e.target.value)}
+                                    className="w-full p-1.5 border rounded-lg text-xs font-mono text-center outline-none"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                                    درجة النجاح والقبول للبند
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="10"
+                                    max="100"
+                                    value={item.itemMinPassingScore}
+                                    onChange={(e) => handleItemChange(idx, 'itemMinPassingScore', e.target.value)}
+                                    className="w-full p-1.5 border rounded-lg text-xs font-mono text-center font-bold text-purple-700 outline-none"
+                                  />
+                                </div>
+
+                                <div className="md:col-span-2">
+                                  <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                                    معايير وتوزيع درجات تقييم هذا البند
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={item.itemCriteria}
+                                    onChange={(e) => handleItemChange(idx, 'itemCriteria', e.target.value)}
+                                    placeholder="مثال: المنشأ والجودة (30)، الكفاءة (30)، الضمان (25)، التوريد (15)"
+                                    className="w-full p-1.5 border rounded-lg text-xs outline-none"
+                                  />
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Item Actions */}
+                            <div className="flex items-center justify-between pt-1">
+                              {formData.allowSplitAwarding && (
+                                <label className="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={item.allowSplit !== false}
+                                    onChange={(e) => handleItemChange(idx, 'allowSplit', e.target.checked)}
+                                    className="w-4 h-4 text-emerald-600 rounded"
+                                  />
+                                  <span>يقبل هذا البند الترسية المستقلة على مورد منفصل (Split Item)</span>
+                                </label>
+                              )}
+
+                              {operationItems.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleApplyCriteriaToAll(idx)}
+                                  className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900 bg-white border border-indigo-200 px-2.5 py-1 rounded-lg transition-colors mr-auto"
+                                >
+                                  تطبيق معايير هذا البند على جميع البنود ⚡
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">ملاحظات وتوجيهات الشئون المالية</label>
+                <textarea
+                  rows={2}
+                  name="financialNotes"
+                  value={formData.financialNotes}
+                  onChange={handleInputChange}
+                  placeholder="أي ملاحظات مالية بخصوص الصرف أو بنود الخصم أو التأشيرات..."
+                  className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* --------------------------------------------------------------------- */}
+          {/* SECTION 3: PAPER APPROVALS & FINAL AUTHORITY DECISION                 */}
+          {/* --------------------------------------------------------------------- */}
+          <div className="bg-white rounded-3xl border border-purple-100 shadow-sm overflow-hidden">
+            <div className="bg-gradient-to-r from-purple-50/80 via-white to-purple-50/40 p-5 border-b border-purple-100 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-md shadow-purple-600/30">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-purple-100 text-purple-800 text-[10px] font-black px-2 py-0.5 rounded-full">القسم الثالث</span>
+                    <h2 className="text-base font-black text-slate-800">الموافقات الورقية واعتماد السلطة المختصة</h2>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">تسجيل حالة أخذ الموافقة المالية الورقية والقرار النهائي للسلطة المختصة</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-6">
+
+              {/* Sub-part A: Paper Financial Approval */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Stamp className="w-4 h-4 text-purple-600" />
+                    <span className="text-xs font-black text-slate-800">أولاً: تسجيل موقف الموافقة المالية الورقية</span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                    تتم الموافقة المالية ور قياً ويسجل المرجع هنا
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, financialApprovalObtained: true }))}
+                    className={`p-3.5 rounded-2xl border-2 text-xs font-bold transition-all flex items-center justify-between ${
+                      formData.financialApprovalObtained
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20'
+                        : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center ${formData.financialApprovalObtained ? 'bg-white text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                        <Check className="w-3.5 h-3.5 font-black" />
+                      </div>
+                      <span>نعم، تم أخذ الموافقة والتأشيرة المالية ور قياً</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, financialApprovalObtained: false }))}
+                    className={`p-3.5 rounded-2xl border-2 text-xs font-bold transition-all flex items-center justify-between ${
+                      !formData.financialApprovalObtained
+                        ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-600/20'
+                        : 'bg-white text-slate-700 border-slate-200 hover:border-amber-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center ${!formData.financialApprovalObtained ? 'bg-white text-amber-600' : 'bg-slate-100 text-slate-400'}`}>
+                        <Clock className="w-3.5 h-3.5" />
+                      </div>
+                      <span>لم يتم أخذ الموافقة المالية بعد (أو جاري المراجعة)</span>
+                    </div>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">تاريخ التأشيرة أو الموافقة المالية</label>
+                    <input
+                      type="date"
+                      name="financialApprovalDate"
+                      value={formData.financialApprovalDate}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 outline-none bg-white font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">رقم التأشيرة / مرجع الموافقة المالية الورقية</label>
+                    <input
+                      type="text"
+                      name="financialApprovalNotes"
+                      value={formData.financialApprovalNotes}
+                      onChange={handleInputChange}
+                      placeholder="مثال: تأشيرة الشئون المالية رقم 45 بتاريخ..."
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 outline-none bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Sub-part B: Authority Decision */}
+              <div className="p-4 bg-purple-50/50 rounded-2xl border border-purple-200 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-purple-700" />
+                    <span className="text-xs font-black text-purple-900">ثانياً: اعتماد وقرار السلطة المختصة</span>
+                  </div>
+                  <div className="text-xs font-black bg-purple-100 text-purple-800 px-3 py-1 rounded-xl">
+                    السلطة المقررة: {formData.approvalAuthority || computedAuthority}
+                  </div>
+                </div>
+
+                {/* Decision Radio/Buttons */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2">قرار الاعتماد النهائي *</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, authorityApprovalStatus: 'معتمد' }))}
+                      className={`p-3.5 rounded-2xl border-2 text-xs font-black transition-all flex items-center justify-between ${
+                        formData.authorityApprovalStatus === 'معتمد'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20'
+                          : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>معتمد وموافق عليه (جاهز للطرح)</span>
+                      </div>
+                      {formData.authorityApprovalStatus === 'معتمد' && <Check className="w-4 h-4" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, authorityApprovalStatus: 'مرفوض' }))}
+                      className={`p-3.5 rounded-2xl border-2 text-xs font-black transition-all flex items-center justify-between ${
+                        formData.authorityApprovalStatus === 'مرفوض'
+                          ? 'bg-rose-600 text-white border-rose-600 shadow-md shadow-rose-600/20'
+                          : 'bg-white text-slate-700 border-slate-200 hover:border-rose-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <XCircle className="w-4 h-4 text-rose-300" />
+                        <span>مرفوض (إعادة تقديم من الأول)</span>
+                      </div>
+                      {formData.authorityApprovalStatus === 'مرفوض' && <X className="w-4 h-4" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, authorityApprovalStatus: 'في انتظار الموافقة' }))}
+                      className={`p-3.5 rounded-2xl border-2 text-xs font-black transition-all flex items-center justify-between ${
+                        formData.authorityApprovalStatus === 'في انتظار الموافقة'
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-600/20'
+                          : 'bg-white text-slate-700 border-slate-200 hover:border-amber-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-amber-300" />
+                        <span>قيد الانتظار والمراجعة الورقية</span>
+                      </div>
+                      {formData.authorityApprovalStatus === 'في انتظار الموافقة' && <Check className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* When REJECTED: Show Mandatory Rejection Reason */}
+                {formData.authorityApprovalStatus === 'مرفوض' && (
+                  <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-2 animate-fadeIn">
+                    <div className="flex items-center gap-2 text-rose-800 font-black text-xs">
+                      <AlertTriangle className="w-4 h-4 text-rose-600" />
+                      <span>تنبيه هام: الطلب المرفوض لن يظهر نهائياً في شاشة الطرح وستقوم الإدارة الطالبة بتقديم طلب جديد</span>
+                    </div>
+                    <label className="block text-xs font-bold text-rose-900">سبب الرفض بالتفصيل * (إلزامي)</label>
+                    <textarea
+                      rows={3}
+                      required
+                      name="authorityRejectionReason"
+                      value={formData.authorityRejectionReason}
+                      onChange={handleInputChange}
+                      placeholder="اكتب أسباب رفض الطلب هنا ليتم تسجيلها..."
+                      className="w-full p-3 rounded-xl border border-rose-300 text-sm focus:ring-2 focus:ring-rose-500 outline-none bg-white"
+                    />
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">تاريخ قرار السلطة المختصة</label>
+                    <input
+                      type="date"
+                      name="authorityApprovalDate"
+                      value={formData.authorityApprovalDate}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 outline-none bg-white font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">القائم بالاعتماد / ممثل السلطة المختصة</label>
+                    <input
+                      type="text"
+                      name="reviewedBy"
+                      value={formData.reviewedBy}
+                      onChange={handleInputChange}
+                      placeholder="مثال: السيد المهندس / رئيس مجلس الإدارة"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 outline-none bg-white font-medium"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Form Actions */}
+          <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-3">
+              <button
+                type="submit"
+                disabled={submitting}
+                className="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-sm shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                {submitting ? (
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5" />
+                )}
+                <span>{editingRequestId ? 'حفظ التعديلات على الطلب' : 'حفظ واعتماد طلب الاحتياج'}</span>
+              </button>
+
+              {editingRequestId && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="px-6 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold text-sm transition-colors"
+                >
+                  إلغاء التعديل
                 </button>
               )}
             </div>
-          )}
 
-          {error && (
-            <div className="flex items-center gap-2 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm">
-              <AlertCircle className="w-4 h-4 shrink-0" />{error}
-            </div>
-          )}
-
-          <button type="submit" disabled={loading}
-            className="w-full flex items-center justify-center gap-2 py-3.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-md shadow-indigo-500/20">
-            {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : (
-              <><Send className="w-4 h-4" /> إرسال الطلب للإدارة المالية</>
-            )}
-          </button>
+            <button
+              type="button"
+              onClick={resetForm}
+              className="px-4 py-2 text-slate-400 hover:text-slate-600 text-xs font-bold flex items-center gap-1.5 transition-colors"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>تفريغ الحقول</span>
+            </button>
+          </div>
         </form>
       )}
 
-      {/* Inquiry Modal */}
-      {showInquiryModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4" dir="rtl">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2"><MessageSquare className="w-4 h-4 text-amber-500" /> استفسار للمخازن</h3>
-              <button onClick={() => setShowInquiryModal(false)} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"><X className="w-4 h-4 text-slate-500" /></button>
+      {/* ========================================================================= */}
+      {/* TAB 2: REQUESTS REGISTRY & DETAILED FOLLOW-UP                             */}
+      {/* ========================================================================= */}
+      {activeTab === 'list' && (
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden space-y-4 p-6">
+          <div className="flex items-center justify-between flex-wrap gap-4 border-b pb-4">
+            <div>
+              <h2 className="text-lg font-black text-slate-800">سجل ومتابعة طلبات الاحتياج</h2>
+              <p className="text-xs text-slate-500">استعراض كافة الطلبات المقدمة ومتابعة التقييم الفني، الموافقات المالية واعتماد السلطة</p>
             </div>
-            <p className="text-xs text-slate-500">اكتب سؤالك بوضوح لإدارة المخازن عن توفر الصنف المطلوب</p>
-            <textarea value={inquiryText} onChange={e => setInquiryText(e.target.value)} rows={4}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
-              placeholder="مثال: هل يوجد في المخازن مواسير PVC قطر 200مم بكمية 500 متر؟" />
-            <div className="flex gap-3">
-              <button onClick={handleSendInquiry} className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl font-bold text-sm hover:bg-amber-600 transition-colors">إرسال</button>
-              <button onClick={() => setShowInquiryModal(false)} className="px-6 py-2.5 bg-slate-100 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">إلغاء</button>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => { resetForm(); setActiveTab('form'); }}
+                className="flex items-center gap-1.5 bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-indigo-700 shadow-sm transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                <span>طلب جديد</span>
+              </button>
+              <button
+                onClick={fetchRequests}
+                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
+                title="تحديث البيانات"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
             </div>
+          </div>
+
+          {/* Search & Status Filters */}
+          <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-3" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="بحث باسم العملية، الجهة الطالبة، أو رقم العملية..."
+                className="w-full pr-10 pl-4 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+              <button
+                onClick={() => setStatusFilter('ALL')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${statusFilter === 'ALL' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                الكل ({requestsList.length})
+              </button>
+              <button
+                onClick={() => setStatusFilter('APPROVED')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${statusFilter === 'APPROVED' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
+              >
+                معتمدة جاهزة للطرح ({requestsList.filter(r => r.WorkflowStatus === 'معتمد' || r.AuthorityApprovalStatus === 'معتمد').length})
+              </button>
+              <button
+                onClick={() => setStatusFilter('PENDING')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${statusFilter === 'PENDING' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'}`}
+              >
+                قيد المراجعة ({requestsList.filter(r => r.WorkflowStatus !== 'معتمد' && r.WorkflowStatus !== 'مرفوض').length})
+              </button>
+              <button
+                onClick={() => setStatusFilter('REJECTED')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${statusFilter === 'REJECTED' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'}`}
+              >
+                مرفوضة ❌ ({requestsList.filter(r => r.WorkflowStatus === 'مرفوض' || r.AuthorityApprovalStatus === 'مرفوض').length})
+              </button>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="border border-slate-200 rounded-2xl overflow-x-auto">
+            <table className="w-full text-right text-xs">
+              <thead className="bg-slate-50 text-slate-600 border-b">
+                <tr>
+                  <th className="p-3 font-bold">#</th>
+                  <th className="p-3 font-bold">اسم وموضوع العملية</th>
+                  <th className="p-3 font-bold">النوع والجهة</th>
+                  <th className="p-3 font-bold">نظام التقييم الفني</th>
+                  <th className="p-3 font-bold">القيمة التقديرية</th>
+                  <th className="p-3 font-bold">الموافقة المالية</th>
+                  <th className="p-3 font-bold">اعتماد السلطة</th>
+                  <th className="p-3 font-bold">موقف الطرح</th>
+                  <th className="p-3 font-bold text-center">الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {loading ? (
+                  <tr>
+                    <td colSpan={9} className="p-8 text-center text-slate-400">
+                      <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                      جاري تحميل الطلبات...
+                    </td>
+                  </tr>
+                ) : filteredRequests.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="p-8 text-center text-slate-400">
+                      لا توجد طلبات احتياج مطابقة لمعايير البحث
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRequests.map(req => {
+                    const isRejected = req.WorkflowStatus === 'مرفوض' || req.AuthorityApprovalStatus === 'مرفوض';
+                    const isApproved = req.WorkflowStatus === 'معتمد' || req.AuthorityApprovalStatus === 'معتمد';
+                    const isTendered = req.Status === 'مطروح';
+                    const isPoints = req.TechnicalEvaluationMethod === 'نظام نقاط';
+
+                    return (
+                      <tr key={req.RequestId} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="p-3 font-mono font-bold text-slate-400">#{req.RequestId}</td>
+                        <td className="p-3">
+                          <div className="font-bold text-slate-800 text-sm">{req.OperationName}</div>
+                          {req.FinancialOperationNumber && (
+                            <div className="text-[11px] font-mono text-indigo-600 font-bold">
+                              رقم: {req.FinancialOperationNumber}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <div className="font-semibold text-slate-700">{req.RequestingDepartment}</div>
+                          <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold">
+                            {req.OperationType}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          {isPoints ? (
+                            <div className="space-y-0.5">
+                              <span className="inline-flex items-center gap-1 bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded font-bold text-[10px]">
+                                <Award className="w-3 h-3 text-purple-600" />
+                                <span>نظام نقاط ({req.MinPassingScore || 70}%)</span>
+                              </span>
+                              {req.AllowSplitAwarding ? (
+                                <div className="text-[9px] text-emerald-700 font-semibold">تجزئة وترسية منفصلة للبند ✓</div>
+                              ) : (
+                                <div className="text-[9px] text-slate-400">صفقة واحدة</div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded font-bold text-[10px]">
+                              <span>مطابق / غير مطابق</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 font-mono font-bold text-emerald-700">
+                          {req.EstimatedValue ? `${Number(req.EstimatedValue).toLocaleString()} ج.م` : '---'}
+                        </td>
+                        <td className="p-3">
+                          {req.FinancialApprovalObtained !== 0 ? (
+                            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded font-bold text-[11px]">
+                              <Check className="w-3 h-3 text-emerald-600" />
+                              <span>تمت ور قياً</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded font-bold text-[11px]">
+                              <Clock className="w-3 h-3 text-amber-600" />
+                              <span>قيد المراجعة</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          {isRejected ? (
+                            <div className="space-y-1">
+                              <span className="inline-flex items-center gap-1 bg-rose-100 text-rose-800 border border-rose-300 px-2.5 py-0.5 rounded-full font-bold text-[11px]">
+                                <X className="w-3 h-3" />
+                                <span>مرفوض</span>
+                              </span>
+                              {req.AuthorityRejectionReason && (
+                                <p className="text-[10px] text-rose-700 line-clamp-1 max-w-xs" title={req.AuthorityRejectionReason}>
+                                  السبب: {req.AuthorityRejectionReason}
+                                </p>
+                              )}
+                            </div>
+                          ) : isApproved ? (
+                            <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5 rounded-full font-bold text-[11px]">
+                              <Check className="w-3 h-3" />
+                              <span>معتمد</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 border border-amber-300 px-2.5 py-0.5 rounded-full font-bold text-[11px]">
+                              <Clock className="w-3 h-3" />
+                              <span>في انتظار الاعتماد</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          {isTendered ? (
+                            <span className="text-xs text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded font-bold">
+                              تم الطرح ✓
+                            </span>
+                          ) : isRejected ? (
+                            <span className="text-[10px] text-rose-600 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                              غير قابل للطرح 🚫
+                            </span>
+                          ) : isApproved ? (
+                            <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                              جاهز للطرح ⚡
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400">معلق</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-center">
+                          <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => handleEditRequest(req)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg font-bold text-xs transition-colors"
+                              title="تعديل أو استكمال بيانات الطلب"
+                            >
+                              تعديل
+                            </button>
+
+                            {/* Tender action: ONLY for approved and NOT tendered and NOT rejected */}
+                            {isApproved && !isTendered && !isRejected && (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/tenders?requestId=${req.RequestId}`)}
+                                className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-bold text-xs shadow-sm transition-all"
+                                title="الانتقال لشاشة الطرح وتوليد العملية"
+                              >
+                                طرح ⚡
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRequest(req.RequestId)}
+                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              title="أرشفة الطلب"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

@@ -3,6 +3,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const path = require('path');
+const fs = require('fs');
 const { connectDb, query } = require('./config/db');
 const { 
   calculateTenderBookletPrice, 
@@ -19,7 +21,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'procurement_super_secret_key_2026'
 // Middleware
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Helper: Audit Logger
 async function logAudit(req, action, entityName, entityId, details) {
@@ -504,7 +508,23 @@ app.get('/api/tenders/:tenderId/items', authenticateToken, async (req, res) => {
   try {
     const { tenderId } = req.params;
     const items = await query('SELECT * FROM TenderItems WHERE TenderId = @tenderId ORDER BY ItemNumber ASC', { tenderId });
-    res.json(items);
+    const parsed = (items || []).map(it => {
+      let criteriaList = [];
+      if (it.ItemCriteria) {
+        try {
+          if (it.ItemCriteria.trim().startsWith('[') || it.ItemCriteria.trim().startsWith('{')) {
+            criteriaList = JSON.parse(it.ItemCriteria);
+          }
+        } catch (e) {
+          criteriaList = [];
+        }
+      }
+      return {
+        ...it,
+        criteriaList: Array.isArray(criteriaList) ? criteriaList : []
+      };
+    });
+    res.json(parsed);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -516,62 +536,153 @@ app.post('/api/tenders/calculate-booklet', async (req, res) => {
   res.json(result);
 });
 
-// Master Tender Creation with Master Items & Total Estimated Value Auto-Calculation
+// Master Tender Creation with Master Items & Total Estimated Value Auto-Calculation & Synchronized NeedsRequest Fields
 app.post('/api/tenders', authenticateToken, requireRoles('Admin', 'TenderOfficer'), async (req, res) => {
   try {
     const {
-      requestId, tenderName, tenderMethod, baseBookletPrice, initialGuaranteeAmount,
-      envelopeOpeningDate, budgetHoldReference, adNewspaper1, adNewspaper2, adPublishDate, adDetails,
-      evaluationMethod, passingScoreDecimal, requiresSample, sampleDetails,
-      items // Array of { itemDescription, unit, estimatedQuantity, estimatedUnitPrice, notes }
+      requestId, tenderName, operationName, operationType, requestingDepartment, tenderMethod, 
+      baseBookletPrice, initialGuaranteeAmount, envelopeOpeningDate, budgetHoldReference, reservationType,
+      fiscalYear, executionDuration, specsAndConditions, warehouseBalance, estimatedValue,
+      adNewspaper1, adNewspaper2, adPublishDate, adDetails,
+      evaluationMethod, technicalEvaluationMethod, passingScoreDecimal, minPassingScore,
+      allowSplitAwarding, technicalCriteriaNotes, requiresSample, sampleDetails,
+      constructionDivision, constructionCategory,
+      financialApprovalObtained, financialApprovalDate, financialApprovalNotes,
+      bookletFile, items, invitedVendors
     } = req.body;
 
-    const requestData = await query('SELECT * FROM NeedsRequests WHERE RequestId = @requestId', { requestId });
+    const requestData = requestId ? await query('SELECT * FROM NeedsRequests WHERE RequestId = @requestId', { requestId }) : [];
     let reqObj = null;
-    let opType = 'توريدات';
-    let fYear = '2025/2026';
+    let opType = operationType || 'توريدات';
+    let fYear = fiscalYear || '2025/2026';
     let finalBudgetRef = budgetHoldReference;
 
     if (requestData && requestData.length > 0) {
       reqObj = requestData[0];
-      opType = reqObj.OperationType;
-      fYear = reqObj.FiscalYear;
-      finalBudgetRef = finalBudgetRef || reqObj.BudgetHoldReference;
+      // Guard: Block rejected needs requests from ever being tendered
+      if (reqObj.WorkflowStatus === 'مرفوض' || reqObj.AuthorityApprovalStatus === 'مرفوض') {
+        return res.status(400).json({ 
+          error: 'عفواً! هذا الطلب مرفوض من قِبل السلطة المختصة ولا يمكن طرحه. يجب على الإدارة الطالبة تقديم طلب احتياج جديد من البداية.' 
+        });
+      }
+      opType = operationType || reqObj.OperationType || 'توريدات';
+      fYear = fiscalYear || reqObj.FiscalYear || '2025/2026';
+      finalBudgetRef = finalBudgetRef || reqObj.BudgetHoldReference || 'موازنة الشركة';
     }
 
     const isSupply = opType === 'توريدات';
-    const { tenderNumber, tenderSymbol } = await generateTenderNumber(opType, tenderMethod, fYear);
+    const finalMethod = tenderMethod || (reqObj ? reqObj.TenderMethodSelected : 'مناقصة عامة') || 'مناقصة عامة';
+    const { tenderNumber, tenderSymbol } = await generateTenderNumber(opType, finalMethod, fYear);
     const bookletCalc = calculateTenderBookletPrice(baseBookletPrice, isSupply);
 
-    // Calculate Total Estimated Value from Tender Items
-    let calculatedTotalEstimated = 0;
+    // Parse items from request body or fallback to NeedsRequest OperationItems
+    let tenderItemsToSave = [];
     if (items && Array.isArray(items) && items.length > 0) {
-      calculatedTotalEstimated = items.reduce((sum, it) => sum + (parseFloat(it.estimatedQuantity || 0) * parseFloat(it.estimatedUnitPrice || 0)), 0);
+      tenderItemsToSave = items;
+    } else if (reqObj && reqObj.OperationItems) {
+      try {
+        const parsed = typeof reqObj.OperationItems === 'string' ? JSON.parse(reqObj.OperationItems) : reqObj.OperationItems;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          tenderItemsToSave = parsed;
+        }
+      } catch (e) {
+        tenderItemsToSave = [];
+      }
+    }
+
+    // Calculate Total Estimated Value from Tender Items or provided value
+    let calculatedTotalEstimated = 0;
+    if (tenderItemsToSave.length > 0) {
+      calculatedTotalEstimated = tenderItemsToSave.reduce((sum, it) => sum + (parseFloat(it.estimatedQuantity || it.quantity || 0) * parseFloat(it.estimatedUnitPrice || it.unitPrice || 0)), 0);
+    } else if (estimatedValue) {
+      calculatedTotalEstimated = parseFloat(estimatedValue) || 0;
     } else if (reqObj) {
       calculatedTotalEstimated = reqObj.EstimatedValue;
     }
 
-    const finalTenderName = tenderName || (reqObj ? reqObj.OperationName : 'عملية بدون عنوان');
+    const finalTenderName = tenderName || operationName || (reqObj ? reqObj.OperationName : 'عملية بدون عنوان');
+    const finalDept = requestingDepartment || (reqObj ? reqObj.RequestingDepartment : 'الإدارة العامة للعقود والمشتريات');
+    const finalExecDuration = executionDuration || (reqObj ? reqObj.ExecutionDuration : null);
+    const finalSpecs = specsAndConditions || (reqObj ? reqObj.SpecsAndConditions : null);
+    const finalWarehouse = warehouseBalance || (reqObj ? reqObj.WarehouseBalance : null);
+    const finalReservationType = reservationType || (reqObj ? (reqObj.ReservationTypeNew || reqObj.ReservationType) : 'موازنة الشركة');
+    const finalEvalMethod = evaluationMethod || technicalEvaluationMethod || (reqObj ? reqObj.TechnicalEvaluationMethod : 'تقرير فني') || 'تقرير فني';
+    const finalMinScore = passingScoreDecimal || minPassingScore || (reqObj ? reqObj.MinPassingScore : 70) || 70;
+    const finalAllowSplit = allowSplitAwarding !== undefined ? (allowSplitAwarding ? 1 : 0) : (reqObj ? (reqObj.AllowSplitAwarding || (isSupply ? 1 : 0)) : (isSupply ? 1 : 0));
+    const finalCriteriaNotes = technicalCriteriaNotes || (reqObj ? reqObj.TechnicalCriteriaNotes : '');
+    const finalConstructionDiv = constructionDivision || (reqObj ? (reqObj.ConstructionDivision || reqObj.ConstructionBranch) : null);
+    const finalConstructionCat = constructionCategory || (reqObj ? (reqObj.ConstructionCategory || reqObj.RequiredGrade) : null);
+    const finalFinApprObtained = financialApprovalObtained !== undefined ? (financialApprovalObtained ? 1 : 0) : (reqObj ? reqObj.FinancialApprovalObtained : 0);
+    const finalFinApprDate = financialApprovalDate || (reqObj ? reqObj.FinancialApprovalDate : null);
+    const finalFinApprNotes = financialApprovalNotes || (reqObj ? reqObj.FinancialApprovalNotes : null);
+
+    // Handle optional booklet document file upload during tender creation
+    let bookletFileName = null;
+    let bookletFilePath = null;
+    let bookletFileSize = 0;
+    let bookletUploadedAt = null;
+
+    if (bookletFile && bookletFile.fileData) {
+      try {
+        const uploadsDir = path.join(__dirname, 'uploads', 'booklets');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+        const bFile = bookletFile;
+        let base64Content = bFile.fileData;
+        let ext = '.pdf';
+        if (bFile.fileName && bFile.fileName.includes('.')) {
+          ext = path.extname(bFile.fileName);
+        }
+        if (base64Content.includes(';base64,')) {
+          base64Content = base64Content.split(';base64,')[1];
+        }
+        const uniqueName = `booklet-${Date.now()}-${Math.floor(Math.random() * 1000)}${ext}`;
+        const targetPath = path.join(uploadsDir, uniqueName);
+        fs.writeFileSync(targetPath, Buffer.from(base64Content, 'base64'));
+
+        bookletFileName = bFile.fileName || `كراسة_شروط_${uniqueName}`;
+        bookletFilePath = `/uploads/booklets/${uniqueName}`;
+        bookletFileSize = bFile.fileSize || Buffer.from(base64Content, 'base64').length;
+        bookletUploadedAt = new Date().toISOString();
+      } catch (uploadErr) {
+        console.error('Error saving booklet file during tender creation:', uploadErr);
+      }
+    }
+
+    // Process Invited Vendors for limited tenders
+    const invitedList = Array.isArray(invitedVendors) ? invitedVendors : [];
+    const invitedVendorsCount = invitedList.length;
+    const invitedVendorsJson = JSON.stringify(invitedList);
 
     const result = await query(`
       INSERT INTO Tenders (
         RequestId, TenderNumber, TenderSymbol, TenderName, TenderMethod, RequestingDepartment, BudgetHoldReference,
         FiscalYear, BaseBookletPrice, CalculatedBookletPrice, InitialGuaranteeAmount, EnvelopeOpeningDate, 
         AdNewspaper1, AdNewspaper2, AdPublishDate, AdDetails, EvaluationMethod, PassingScoreDecimal,
-        RequiresSample, SampleDetails, Status, IsDeleted
+        RequiresSample, SampleDetails, BookletFileName, BookletFilePath, BookletFileSize, BookletUploadedAt,
+        AllowSplitAwarding, TechnicalCriteriaNotes,
+        OperationType, ExecutionDuration, WarehouseBalance, SpecsAndConditions, ReservationType, EstimatedValue,
+        ConstructionDivision, ConstructionCategory, FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes,
+        InvitedVendorsCount, InvitedVendorsJson,
+        Status, IsDeleted
       ) VALUES (
-        @requestId, @tenderNumber, @tenderSymbol, @finalTenderName, @tenderMethod, @requestingDepartment, @finalBudgetRef,
+        @requestId, @tenderNumber, @tenderSymbol, @finalTenderName, @finalMethod, @finalDept, @finalBudgetRef,
         @fiscalYear, @baseBookletPrice, @calculatedBookletPrice, @initialGuaranteeAmount, @envelopeOpeningDate,
-        @adNewspaper1, @adNewspaper2, @adPublishDate, @adDetails, @evaluationMethod, @passingScoreDecimal,
-        @requiresSample, @sampleDetails, N'نشط', 0
+        @adNewspaper1, @adNewspaper2, @adPublishDate, @adDetails, @finalEvalMethod, @finalMinScore,
+        @requiresSample, @sampleDetails, @bookletFileName, @bookletFilePath, @bookletFileSize, @bookletUploadedAt,
+        @finalAllowSplit, @finalCriteriaNotes,
+        @opType, @finalExecDuration, @finalWarehouse, @finalSpecs, @finalReservationType, @calculatedTotalEstimated,
+        @finalConstructionDiv, @finalConstructionCat, @finalFinApprObtained, @finalFinApprDate, @finalFinApprNotes,
+        @invitedVendorsCount, @invitedVendorsJson,
+        N'نشط', 0
       )
     `, {
       requestId: requestId || null,
       tenderNumber,
       tenderSymbol,
       finalTenderName,
-      tenderMethod,
-      requestingDepartment: reqObj ? reqObj.RequestingDepartment : 'الإدارة العامة للعقود والمشتريات',
+      finalMethod,
+      finalDept,
       finalBudgetRef: finalBudgetRef || 'موازنة الشركة',
       fiscalYear: fYear,
       baseBookletPrice,
@@ -582,33 +693,93 @@ app.post('/api/tenders', authenticateToken, requireRoles('Admin', 'TenderOfficer
       adNewspaper2: adNewspaper2 || 'الأخبار',
       adPublishDate: adPublishDate || null,
       adDetails: adDetails || null,
-      evaluationMethod: evaluationMethod || 'تقرير فني',
-      passingScoreDecimal: passingScoreDecimal || 0,
+      finalEvalMethod,
+      finalMinScore,
       requiresSample: requiresSample ? 1 : 0,
-      sampleDetails: sampleDetails || null
+      sampleDetails: sampleDetails || null,
+      bookletFileName,
+      bookletFilePath,
+      bookletFileSize,
+      bookletUploadedAt,
+      finalAllowSplit,
+      finalCriteriaNotes,
+      opType,
+      finalExecDuration,
+      finalWarehouse,
+      finalSpecs,
+      finalReservationType,
+      calculatedTotalEstimated,
+      finalConstructionDiv,
+      finalConstructionCat,
+      finalFinApprObtained,
+      finalFinApprDate,
+      finalFinApprNotes,
+      invitedVendorsCount,
+      invitedVendorsJson
     });
 
     const tenderId = result.lastID;
 
     // Save Master Tender Items
-    if (items && Array.isArray(items) && items.length > 0) {
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i];
-        const qty = parseFloat(it.estimatedQuantity || 0);
-        const price = parseFloat(it.estimatedUnitPrice || 0);
+    if (tenderItemsToSave.length > 0) {
+      for (let i = 0; i < tenderItemsToSave.length; i++) {
+        const it = tenderItemsToSave[i];
+        const qty = parseFloat(it.estimatedQuantity || it.quantity || 0);
+        const price = parseFloat(it.estimatedUnitPrice || it.unitPrice || 0);
         const total = qty * price;
         await query(`
-          INSERT INTO TenderItems (TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, EstimatedTotalPrice, Notes)
-          VALUES (@tenderId, @itemNumber, @itemDescription, @unit, @estimatedQuantity, @estimatedUnitPrice, @estimatedTotalPrice, @notes)
+          INSERT INTO TenderItems (
+            TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, EstimatedTotalPrice, Notes,
+            ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit
+          )
+          VALUES (
+            @tenderId, @itemNumber, @itemDescription, @unit, @estimatedQuantity, @estimatedUnitPrice, @estimatedTotalPrice, @notes,
+            @itemSpecs, @itemMaxScore, @itemMinPassingScore, @itemCriteria, @allowSplit
+          )
         `, {
           tenderId,
           itemNumber: i + 1,
-          itemDescription: it.itemDescription,
+          itemDescription: it.itemDescription || it.description || it.name || 'بند غير مسمى',
           unit: it.unit || 'عدد',
           estimatedQuantity: qty,
           estimatedUnitPrice: price,
           estimatedTotalPrice: total,
-          notes: it.notes || null
+          notes: it.notes || null,
+          itemSpecs: it.specs || it.itemSpecs || null,
+          itemMaxScore: parseFloat(it.itemMaxScore) || 100,
+          itemMinPassingScore: parseFloat(it.itemMinPassingScore) || 70,
+          itemCriteria: (it.criteriaList && Array.isArray(it.criteriaList) && it.criteriaList.length > 0)
+            ? JSON.stringify(it.criteriaList)
+            : (typeof it.itemCriteria === 'object' ? JSON.stringify(it.itemCriteria) : (it.itemCriteria || null)),
+          allowSplit: it.allowSplit !== undefined ? (it.allowSplit ? 1 : 0) : 1
+        });
+      }
+    }
+
+    // Save Invited Vendors into TenderInvitedVendors table
+    if (invitedList.length > 0) {
+      for (const iv of invitedList) {
+        await query(`
+          INSERT INTO TenderInvitedVendors (
+            TenderId, VendorId, VendorName, TaxCardNo, CommercialRegisterNo, Phone, Email,
+            InvitationMethod, InvitationLetterNo, InvitationDate, ResponseStatus, Notes
+          ) VALUES (
+            @tenderId, @vendorId, @vendorName, @taxCardNo, @commercialRegisterNo, @phone, @email,
+            @invitationMethod, @invitationLetterNo, @invitationDate, @responseStatus, @notes
+          )
+        `, {
+          tenderId,
+          vendorId: iv.vendorId || iv.VendorId || null,
+          vendorName: iv.vendorName || iv.VendorName || iv.companyName || iv.CompanyName || 'شركة غير محددة',
+          taxCardNo: iv.taxCardNo || iv.TaxCardNo || null,
+          commercialRegisterNo: iv.commercialRegisterNo || iv.CommercialRegisterNo || null,
+          phone: iv.phone || iv.Phone || null,
+          email: iv.email || iv.Email || null,
+          invitationMethod: iv.invitationMethod || 'بريد مسجل بعلم الوصول',
+          invitationLetterNo: iv.invitationLetterNo || null,
+          invitationDate: iv.invitationDate || new Date().toISOString().split('T')[0],
+          responseStatus: iv.responseStatus || 'تم توجيه الدعوة',
+          notes: iv.notes || null
         });
       }
     }
@@ -617,15 +788,194 @@ app.post('/api/tenders', authenticateToken, requireRoles('Admin', 'TenderOfficer
       await query("UPDATE NeedsRequests SET Status = N'مطروح' WHERE RequestId = @requestId", { requestId });
     }
 
-    await logAudit(req, 'طرح عملية جديدة', 'شاشة الطرح', tenderId, `تم طرح العملية برقم ${tenderNumber} بإجمالي قيمة تقديرية ${calculatedTotalEstimated} ج.م ومذكرة حجز: ${finalBudgetRef}`);
+    await logAudit(req, 'طرح عملية جديدة', 'شاشة الطرح', tenderId, `تم طرح العملية برقم ${tenderNumber} (${finalMethod}) بقيمة تقديرية ${calculatedTotalEstimated} ج.م ومذكرة حجز: ${finalBudgetRef}. مدعوين: ${invitedVendorsCount}`);
 
     res.json({ 
       message: 'تم طرح العملية بنجاح برقم: ' + tenderNumber, 
       tenderNumber, 
       tenderId,
       calculatedTotalEstimated,
-      totalEstimatedTafqeet: tafqeetCurrency(calculatedTotalEstimated)
+      totalEstimatedTafqeet: tafqeetCurrency(calculatedTotalEstimated),
+      invitedVendorsCount
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET: Tender Invited Vendors for Limited Tenders / Practices
+app.get('/api/tenders/:tenderId/invited-vendors', authenticateToken, async (req, res) => {
+  try {
+    const { tenderId } = req.params;
+    const list = await query(
+      'SELECT * FROM TenderInvitedVendors WHERE TenderId = @tenderId ORDER BY InvitedId ASC',
+      { tenderId }
+    );
+    res.json(list || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST: Add Invited Vendor to a Tender
+app.post('/api/tenders/:tenderId/invited-vendors', authenticateToken, requireRoles('Admin', 'TenderOfficer'), async (req, res) => {
+  try {
+    const { tenderId } = req.params;
+    const {
+      vendorId, vendorName, taxCardNo, commercialRegisterNo, phone, email,
+      invitationMethod, invitationLetterNo, invitationDate, responseStatus, notes
+    } = req.body;
+
+    if (!vendorName) {
+      return res.status(400).json({ error: 'اسم المورد أو المقاول حقل إجباري' });
+    }
+
+    const insRes = await query(`
+      INSERT INTO TenderInvitedVendors (
+        TenderId, VendorId, VendorName, TaxCardNo, CommercialRegisterNo, Phone, Email,
+        InvitationMethod, InvitationLetterNo, InvitationDate, ResponseStatus, Notes
+      ) VALUES (
+        @tenderId, @vendorId, @vendorName, @taxCardNo, @commercialRegisterNo, @phone, @email,
+        @invitationMethod, @invitationLetterNo, @invitationDate, @responseStatus, @notes
+      )
+    `, {
+      tenderId,
+      vendorId: vendorId || null,
+      vendorName,
+      taxCardNo: taxCardNo || null,
+      commercialRegisterNo: commercialRegisterNo || null,
+      phone: phone || null,
+      email: email || null,
+      invitationMethod: invitationMethod || 'بريد مسجل بعلم الوصول',
+      invitationLetterNo: invitationLetterNo || null,
+      invitationDate: invitationDate || new Date().toISOString().split('T')[0],
+      responseStatus: responseStatus || 'تم توجيه الدعوة',
+      notes: notes || null
+    });
+
+    // Update count in Tenders table
+    const countRes = await query('SELECT COUNT(*) as cnt FROM TenderInvitedVendors WHERE TenderId = @tenderId', { tenderId });
+    const cnt = countRes[0]?.cnt || 1;
+    await query('UPDATE Tenders SET InvitedVendorsCount = @cnt WHERE TenderId = @tenderId', { cnt, tenderId });
+
+    res.json({ message: 'تم إضافة المورد/المقاول لقائمة المدعوين بنجاح', invitedId: insRes.lastID, count: cnt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE: Remove Invited Vendor
+app.delete('/api/tenders/:tenderId/invited-vendors/:invitedId', authenticateToken, requireRoles('Admin', 'TenderOfficer'), async (req, res) => {
+  try {
+    const { tenderId, invitedId } = req.params;
+    await query('DELETE FROM TenderInvitedVendors WHERE InvitedId = @invitedId AND TenderId = @tenderId', { invitedId, tenderId });
+    const countRes = await query('SELECT COUNT(*) as cnt FROM TenderInvitedVendors WHERE TenderId = @tenderId', { tenderId });
+    const cnt = countRes[0]?.cnt || 0;
+    await query('UPDATE Tenders SET InvitedVendorsCount = @cnt WHERE TenderId = @tenderId', { cnt, tenderId });
+
+    res.json({ message: 'تم حذف المورد من قائمة المدعوين', count: cnt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Upload/Attach Booklet document to an existing tender
+app.post('/api/tenders/:id/booklet', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { fileName, fileData, fileSize } = req.body;
+    if (!fileData) {
+      return res.status(400).json({ error: 'لم يتم إرسال ملف كراسة الشروط' });
+    }
+
+    const uploadsDir = path.join(__dirname, 'uploads', 'booklets');
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+    let base64Content = fileData;
+    let ext = '.pdf';
+    if (fileName && fileName.includes('.')) {
+      ext = path.extname(fileName);
+    }
+    if (base64Content.includes(';base64,')) {
+      base64Content = base64Content.split(';base64,')[1];
+    }
+    const uniqueName = `booklet-tender-${id}-${Date.now()}${ext}`;
+    const targetPath = path.join(uploadsDir, uniqueName);
+    fs.writeFileSync(targetPath, Buffer.from(base64Content, 'base64'));
+
+    const originalName = fileName || `كراسة_شروط_عملية_${id}${ext}`;
+    const publicUrl = `/uploads/booklets/${uniqueName}`;
+    const calculatedSize = fileSize || Buffer.from(base64Content, 'base64').length;
+    const uploadTime = new Date().toISOString();
+
+    await query(`
+      UPDATE Tenders SET
+        BookletFileName = @originalName,
+        BookletFilePath = @publicUrl,
+        BookletFileSize = @calculatedSize,
+        BookletUploadedAt = @uploadTime
+      WHERE TenderId = @id
+    `, { originalName, publicUrl, calculatedSize, uploadTime, id });
+
+    await logAudit(req, 'رفع كراسة الشروط', 'Tenders', id, `تم رفع مستند كراسة الشروط: ${originalName} بحجم ${calculatedSize} بايت`);
+
+    res.json({
+      success: true,
+      message: 'تم رفع وحفظ مستند كراسة الشروط بنجاح',
+      booklet: {
+        fileName: originalName,
+        filePath: publicUrl,
+        fileSize: calculatedSize,
+        uploadedAt: uploadTime
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Remove Booklet document from a tender
+app.delete('/api/tenders/:id/booklet', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tenders = await query('SELECT * FROM Tenders WHERE TenderId = @id', { id });
+    if (tenders && tenders.length > 0 && tenders[0].BookletFilePath) {
+      const fullPath = path.join(__dirname, tenders[0].BookletFilePath);
+      if (fs.existsSync(fullPath)) {
+        try { fs.unlinkSync(fullPath); } catch (e) {}
+      }
+    }
+
+    await query(`
+      UPDATE Tenders SET
+        BookletFileName = NULL,
+        BookletFilePath = NULL,
+        BookletFileSize = 0,
+        BookletUploadedAt = NULL
+      WHERE TenderId = @id
+    `, { id });
+
+    await logAudit(req, 'حذف كراسة الشروط', 'Tenders', id, `تم حذف مستند كراسة الشروط للعملية رقم ${id}`);
+    res.json({ success: true, message: 'تم حذف مستند كراسة الشروط' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Download Booklet document
+app.get('/api/tenders/:id/booklet/download', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tenders = await query('SELECT * FROM Tenders WHERE TenderId = @id', { id });
+    if (!tenders || tenders.length === 0 || !tenders[0].BookletFilePath) {
+      return res.status(404).json({ error: 'ملف كراسة الشروط غير متوفر لهذه العملية' });
+    }
+    const t = tenders[0];
+    const fullPath = path.join(__dirname, t.BookletFilePath);
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ error: 'الملف غير موجود على الخادم' });
+    }
+    res.download(fullPath, t.BookletFileName || path.basename(fullPath));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1314,27 +1664,112 @@ app.get('/api/needs-requests/pending-count', authenticateToken, async (req, res)
   }
 });
 
-// POST: Submit needs request (Step 1 - from any department)
+// POST: Submit needs request (Comprehensive: Sections 1, 2, 3 all in one unified screen)
 app.post('/api/needs-requests/submit', authenticateToken, async (req, res) => {
   try {
     const {
+      // Section 1: Basic & Technical Specs
       operationName, operationType, requestingDepartment, executionDuration,
-      specsAndConditions, requiresSample, sampleDetails, fiscalYear
+      specsAndConditions, requiresSample, sampleDetails, fiscalYear, warehouseBalance,
+      technicalEvaluationMethod, minPassingScore, allowSplitAwarding, technicalCriteriaNotes,
+      
+      // Section 2: Financial Review & Items
+      tenderMethodSelected, estimatedValue, preliminaryReservation, reservationTypeNew,
+      budgetHoldReference, initialGuaranteePercent, submittalType, bookletPrice,
+      operationTerms, operationItems, constructionDivision, constructionCategory, financialNotes,
+      
+      // Section 3: Paper Approvals & Authority
+      financialApprovalObtained, financialApprovalDate, financialApprovalNotes,
+      approvalAuthority, authorityApprovalStatus, authorityApprovalDate,
+      authorityRejectionReason, reviewedBy
     } = req.body;
 
     if (!operationName || !operationType || !requestingDepartment) {
-      return res.status(400).json({ error: 'برجاء تعبئة جميع الحقول الإلزامية' });
+      return res.status(400).json({ error: 'برجاء تعبئة اسم العملية ونوعها والجهة الطالبة' });
     }
+
+    const fy = fiscalYear || '2025/2026';
+    const estVal = parseFloat(estimatedValue) || 0;
+
+    // Compute approval authority
+    const authority = approvalAuthority || (tenderMethodSelected && estVal > 0 ? getApprovalAuthority(tenderMethodSelected, estVal) : '');
+
+    // Generate symbol
+    let symbol = '';
+    if (operationType === 'تعاقدات') {
+      if (tenderMethodSelected === 'مناقصة عامة') symbol = 'هـ';
+      else if (tenderMethodSelected === 'مناقصة محدودة') symbol = 'هـ م';
+      else if (tenderMethodSelected === 'ممارسة عامة') symbol = 'م ع';
+      else if (tenderMethodSelected === 'ممارسة محدودة') symbol = 'م ح';
+      else if (tenderMethodSelected === 'ممارسة محلية') symbol = 'م م';
+      else if (tenderMethodSelected === 'أمر مباشر') symbol = 'ا م';
+    } else if (operationType === 'توريدات') {
+      if (tenderMethodSelected === 'مناقصة عامة') symbol = 'ت';
+      else if (tenderMethodSelected === 'مناقصة محدودة') symbol = 'ت م';
+      else if (tenderMethodSelected === 'ممارسة عامة') symbol = 'م ت';
+      else if (tenderMethodSelected === 'ممارسة محدودة') symbol = 'م';
+      else if (tenderMethodSelected === 'أمر مباشر') symbol = 'أ';
+    } else if (operationType === 'مزادات') {
+      if (tenderMethodSelected === 'مزايدة عامة') symbol = 'ز';
+      else if (tenderMethodSelected === 'مزايدة محدودة') symbol = 'ز م';
+      else if (tenderMethodSelected === 'أمر مباشر') symbol = 'ز أ';
+    }
+
+    let operationNumber = '';
+    if (symbol) {
+      const countRes = await query(
+        `SELECT COUNT(*) as cnt FROM NeedsRequests WHERE FinancialOperationSymbol = @symbol AND FiscalYear = @fy`,
+        { symbol, fy }
+      );
+      const seq = (countRes[0]?.cnt || 0) + 1;
+      operationNumber = `${seq}/${fy}/${symbol}`;
+    }
+
+    // Determine workflow & system status
+    let workflowStatus = 'طلب جديد';
+    let status = 'معلق';
+
+    if (authorityApprovalStatus === 'معتمد') {
+      workflowStatus = 'معتمد';
+      status = 'معلق'; // ready for tendering
+    } else if (authorityApprovalStatus === 'مرفوض') {
+      workflowStatus = 'مرفوض';
+      status = 'ملغى'; // cancelled / cannot be tendered
+    } else if (tenderMethodSelected && estVal > 0) {
+      workflowStatus = 'في انتظار السلطة';
+      status = 'معلق';
+    } else {
+      workflowStatus = 'في انتظار المالية';
+      status = 'معلق';
+    }
+
+    const itemsJson = operationItems ? (typeof operationItems === 'string' ? operationItems : JSON.stringify(operationItems)) : '[]';
 
     const result = await query(`
       INSERT INTO NeedsRequests (
         OperationName, OperationType, RequestingDepartment, ExecutionDuration,
-        SpecsAndConditions, RequiresSample, SampleDetails,
-        FiscalYear, EstimatedValue, WorkflowStatus, Status, IsDeleted
+        SpecsAndConditions, RequiresSample, SampleDetails, WarehouseBalance,
+        FiscalYear, EstimatedValue, TenderMethodSelected, PreliminaryReservation, InitialReservation,
+        ReservationTypeNew, BudgetHoldReference, InitialGuaranteePercent, SubmittalType, BookletPrice,
+        OperationTerms, OperationItems, ConstructionDivision, ConstructionCategory, FinancialNotes,
+        FinancialOperationNumber, FinancialOperationSymbol, ApprovalAuthority,
+        FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes,
+        AuthorityApprovalStatus, AuthorityApprovalDate, AuthorityRejectionReason,
+        AuthorityReviewedBy, AuthorityReviewedAt, FinancialReviewedAt, FinancialReviewedBy,
+        TechnicalEvaluationMethod, MinPassingScore, AllowSplitAwarding, TechnicalCriteriaNotes,
+        WorkflowStatus, Status, IsDeleted
       ) VALUES (
         @operationName, @operationType, @requestingDepartment, @executionDuration,
-        @specsAndConditions, @requiresSample, @sampleDetails,
-        @fiscalYear, 0, N'في انتظار المالية', N'معلق', 0
+        @specsAndConditions, @requiresSample, @sampleDetails, @warehouseBalance,
+        @fiscalYear, @estimatedValue, @tenderMethodSelected, @preliminaryReservation, @initialReservation,
+        @reservationTypeNew, @budgetHoldReference, @initialGuaranteePercent, @submittalType, @bookletPrice,
+        @operationTerms, @operationItems, @constructionDivision, @constructionCategory, @financialNotes,
+        @operationNumber, @symbol, @authority,
+        @financialApprovalObtained, @financialApprovalDate, @financialApprovalNotes,
+        @authorityApprovalStatus, @authorityApprovalDate, @authorityRejectionReason,
+        @reviewedBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, @reviewedBy,
+        @technicalEvaluationMethod, @minPassingScore, @allowSplitAwarding, @technicalCriteriaNotes,
+        @workflowStatus, @status, 0
       )
     `, {
       operationName, operationType, requestingDepartment,
@@ -1342,14 +1777,237 @@ app.post('/api/needs-requests/submit', authenticateToken, async (req, res) => {
       specsAndConditions: specsAndConditions || null,
       requiresSample: requiresSample ? 1 : 0,
       sampleDetails: sampleDetails || null,
-      fiscalYear: fiscalYear || '2025/2026'
+      warehouseBalance: warehouseBalance || null,
+      fiscalYear: fy,
+      estimatedValue: estVal,
+      tenderMethodSelected: tenderMethodSelected || null,
+      preliminaryReservation: parseFloat(preliminaryReservation) || estVal,
+      initialReservation: parseFloat(preliminaryReservation) || estVal,
+      reservationTypeNew: reservationTypeNew || 'جاري',
+      budgetHoldReference: budgetHoldReference || null,
+      initialGuaranteePercent: parseFloat(initialGuaranteePercent) || 2,
+      submittalType: submittalType || 'مظروفيين',
+      bookletPrice: parseFloat(bookletPrice) || 0,
+      operationTerms: operationTerms || '',
+      operationItems: itemsJson,
+      constructionDivision: constructionDivision || null,
+      constructionCategory: constructionCategory || null,
+      financialNotes: financialNotes || '',
+      operationNumber: operationNumber || null,
+      symbol: symbol || null,
+      authority: authority || null,
+      financialApprovalObtained: financialApprovalObtained ? 1 : 0,
+      financialApprovalDate: financialApprovalDate || null,
+      financialApprovalNotes: financialApprovalNotes || null,
+      authorityApprovalStatus: authorityApprovalStatus || (workflowStatus === 'معتمد' ? 'معتمد' : (workflowStatus === 'مرفوض' ? 'مرفوض' : 'في انتظار الموافقة')),
+      authorityApprovalDate: authorityApprovalDate || (authorityApprovalStatus ? new Date().toISOString().split('T')[0] : null),
+      authorityRejectionReason: authorityRejectionReason || null,
+      reviewedBy: reviewedBy || req.user?.FullName || 'المستخدم',
+      technicalEvaluationMethod: technicalEvaluationMethod || 'مطابق أو غير مطابق',
+      minPassingScore: parseFloat(minPassingScore) || 70,
+      allowSplitAwarding: allowSplitAwarding ? 1 : (operationType === 'توريدات' ? 1 : 0),
+      technicalCriteriaNotes: technicalCriteriaNotes || '',
+      workflowStatus,
+      status
     });
 
     const requestId = result.lastID;
-    await logAudit(req, 'تقديم طلب احتياج', 'NeedsRequests', requestId,
-      `تم تقديم طلب احتياج: ${operationName} من إدارة: ${requestingDepartment}`);
+    await logAudit(req, 'تقديم طلب احتياج شامل', 'NeedsRequests', requestId,
+      `تم تسجيل طلب احتياج متكامل: ${operationName} من إدارة: ${requestingDepartment} (الحالة: ${workflowStatus})`);
 
-    res.json({ success: true, requestId, message: 'تم إرسال طلب الاحتياج للإدارة المالية بنجاح' });
+    res.json({ success: true, requestId, operationNumber, workflowStatus, message: 'تم حفظ طلب الاحتياج بنجاح' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT: Update comprehensive needs request
+app.put('/api/needs-requests/:id/comprehensive', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = await query('SELECT * FROM NeedsRequests WHERE RequestId = @id', { id });
+    if (!existing || existing.length === 0) return res.status(404).json({ error: 'الطلب غير موجود' });
+    const old = existing[0];
+
+    const {
+      operationName, operationType, requestingDepartment, executionDuration,
+      specsAndConditions, requiresSample, sampleDetails, fiscalYear, warehouseBalance,
+      technicalEvaluationMethod, minPassingScore, allowSplitAwarding, technicalCriteriaNotes,
+      tenderMethodSelected, estimatedValue, preliminaryReservation, reservationTypeNew,
+      budgetHoldReference, initialGuaranteePercent, submittalType, bookletPrice,
+      operationTerms, operationItems, constructionDivision, constructionCategory, financialNotes,
+      financialApprovalObtained, financialApprovalDate, financialApprovalNotes,
+      approvalAuthority, authorityApprovalStatus, authorityApprovalDate,
+      authorityRejectionReason, reviewedBy
+    } = req.body;
+
+    const opType = operationType || old.OperationType;
+    const tMethod = tenderMethodSelected || old.TenderMethodSelected;
+    const estVal = estimatedValue !== undefined ? parseFloat(estimatedValue) : old.EstimatedValue;
+    const fy = fiscalYear || old.FiscalYear || '2025/2026';
+
+    const authority = approvalAuthority || (tMethod && estVal > 0 ? getApprovalAuthority(tMethod, estVal) : old.ApprovalAuthority);
+
+    let symbol = old.FinancialOperationSymbol;
+    if (opType === 'تعاقدات') {
+      if (tMethod === 'مناقصة عامة') symbol = 'هـ';
+      else if (tMethod === 'مناقصة محدودة') symbol = 'هـ م';
+      else if (tMethod === 'ممارسة عامة') symbol = 'م ع';
+      else if (tMethod === 'ممارسة محدودة') symbol = 'م ح';
+      else if (tMethod === 'ممارسة محلية') symbol = 'م م';
+      else if (tMethod === 'أمر مباشر') symbol = 'ا م';
+    } else if (opType === 'توريدات') {
+      if (tMethod === 'مناقصة عامة') symbol = 'ت';
+      else if (tMethod === 'مناقصة محدودة') symbol = 'ت م';
+      else if (tMethod === 'ممارسة عامة') symbol = 'م ت';
+      else if (tMethod === 'ممارسة محدودة') symbol = 'م';
+      else if (tMethod === 'أمر مباشر') symbol = 'أ';
+    } else if (opType === 'مزادات') {
+      if (tMethod === 'مزايدة عامة') symbol = 'ز';
+      else if (tMethod === 'مزايدة محدودة') symbol = 'ز م';
+      else if (tMethod === 'أمر مباشر') symbol = 'ز أ';
+    }
+
+    let operationNumber = old.FinancialOperationNumber;
+    if (!operationNumber && symbol) {
+      const countRes = await query(
+        `SELECT COUNT(*) as cnt FROM NeedsRequests WHERE FinancialOperationSymbol = @symbol AND FiscalYear = @fy AND RequestId != @id`,
+        { symbol, fy, id }
+      );
+      const seq = (countRes[0]?.cnt || 0) + 1;
+      operationNumber = `${seq}/${fy}/${symbol}`;
+    }
+
+    let workflowStatus = old.WorkflowStatus;
+    let status = old.Status;
+
+    if (authorityApprovalStatus === 'معتمد') {
+      workflowStatus = 'معتمد';
+      status = old.Status === 'مطروح' ? 'مطروح' : 'معلق';
+    } else if (authorityApprovalStatus === 'مرفوض') {
+      workflowStatus = 'مرفوض';
+      status = 'ملغى';
+    } else if (tMethod && estVal > 0) {
+      workflowStatus = 'في انتظار السلطة';
+    }
+
+    const itemsJson = operationItems ? (typeof operationItems === 'string' ? operationItems : JSON.stringify(operationItems)) : (old.OperationItems || '[]');
+
+    await query(`
+      UPDATE NeedsRequests SET
+        OperationName = @operationName,
+        OperationType = @operationType,
+        RequestingDepartment = @requestingDepartment,
+        ExecutionDuration = @executionDuration,
+        SpecsAndConditions = @specsAndConditions,
+        RequiresSample = @requiresSample,
+        SampleDetails = @sampleDetails,
+        WarehouseBalance = @warehouseBalance,
+        FiscalYear = @fiscalYear,
+        EstimatedValue = @estimatedValue,
+        TenderMethodSelected = @tenderMethodSelected,
+        PreliminaryReservation = @preliminaryReservation,
+        InitialReservation = @preliminaryReservation,
+        ReservationTypeNew = @reservationTypeNew,
+        BudgetHoldReference = @budgetHoldReference,
+        InitialGuaranteePercent = @initialGuaranteePercent,
+        SubmittalType = @submittalType,
+        BookletPrice = @bookletPrice,
+        OperationTerms = @operationTerms,
+        OperationItems = @operationItems,
+        ConstructionDivision = @constructionDivision,
+        ConstructionCategory = @constructionCategory,
+        FinancialNotes = @financialNotes,
+        FinancialOperationNumber = @operationNumber,
+        FinancialOperationSymbol = @symbol,
+        ApprovalAuthority = @authority,
+        FinancialApprovalObtained = @financialApprovalObtained,
+        FinancialApprovalDate = @financialApprovalDate,
+        FinancialApprovalNotes = @financialApprovalNotes,
+        AuthorityApprovalStatus = @authorityApprovalStatus,
+        AuthorityApprovalDate = @authorityApprovalDate,
+        AuthorityRejectionReason = @authorityRejectionReason,
+        AuthorityReviewedBy = @reviewedBy,
+        AuthorityReviewedAt = CURRENT_TIMESTAMP,
+        TechnicalEvaluationMethod = @technicalEvaluationMethod,
+        MinPassingScore = @minPassingScore,
+        AllowSplitAwarding = @allowSplitAwarding,
+        TechnicalCriteriaNotes = @technicalCriteriaNotes,
+        WorkflowStatus = @workflowStatus,
+        Status = @status
+      WHERE RequestId = @id
+    `, {
+      operationName: operationName || old.OperationName,
+      operationType: opType,
+      requestingDepartment: requestingDepartment || old.RequestingDepartment,
+      executionDuration: executionDuration !== undefined ? executionDuration : old.ExecutionDuration,
+      specsAndConditions: specsAndConditions !== undefined ? specsAndConditions : old.SpecsAndConditions,
+      requiresSample: requiresSample !== undefined ? (requiresSample ? 1 : 0) : old.RequiresSample,
+      sampleDetails: sampleDetails !== undefined ? sampleDetails : old.SampleDetails,
+      warehouseBalance: warehouseBalance !== undefined ? warehouseBalance : old.WarehouseBalance,
+      fiscalYear: fy,
+      estimatedValue: estVal,
+      tenderMethodSelected: tMethod || null,
+      preliminaryReservation: preliminaryReservation !== undefined ? parseFloat(preliminaryReservation) : (old.PreliminaryReservation || estVal),
+      reservationTypeNew: reservationTypeNew || old.ReservationTypeNew || 'جاري',
+      budgetHoldReference: budgetHoldReference !== undefined ? budgetHoldReference : old.BudgetHoldReference,
+      initialGuaranteePercent: initialGuaranteePercent !== undefined ? parseFloat(initialGuaranteePercent) : (old.InitialGuaranteePercent || 2),
+      submittalType: submittalType || old.SubmittalType || 'مظروفيين',
+      bookletPrice: bookletPrice !== undefined ? parseFloat(bookletPrice) : (old.BookletPrice || 0),
+      operationTerms: operationTerms !== undefined ? operationTerms : old.OperationTerms,
+      operationItems: itemsJson,
+      constructionDivision: constructionDivision !== undefined ? constructionDivision : old.ConstructionDivision,
+      constructionCategory: constructionCategory !== undefined ? constructionCategory : old.ConstructionCategory,
+      financialNotes: financialNotes !== undefined ? financialNotes : old.FinancialNotes,
+      operationNumber: operationNumber || old.FinancialOperationNumber,
+      symbol: symbol || old.FinancialOperationSymbol,
+      authority: authority || old.ApprovalAuthority,
+      financialApprovalObtained: financialApprovalObtained !== undefined ? (financialApprovalObtained ? 1 : 0) : old.FinancialApprovalObtained,
+      financialApprovalDate: financialApprovalDate || old.FinancialApprovalDate,
+      financialApprovalNotes: financialApprovalNotes !== undefined ? financialApprovalNotes : old.FinancialApprovalNotes,
+      authorityApprovalStatus: authorityApprovalStatus || old.AuthorityApprovalStatus,
+      authorityApprovalDate: authorityApprovalDate || old.AuthorityApprovalDate,
+      authorityRejectionReason: authorityRejectionReason !== undefined ? authorityRejectionReason : old.AuthorityRejectionReason,
+      reviewedBy: reviewedBy || req.user?.FullName || old.AuthorityReviewedBy || 'المستخدم',
+      technicalEvaluationMethod: technicalEvaluationMethod !== undefined ? technicalEvaluationMethod : (old.TechnicalEvaluationMethod || 'مطابق أو غير مطابق'),
+      minPassingScore: minPassingScore !== undefined ? parseFloat(minPassingScore) : (old.MinPassingScore || 70),
+      allowSplitAwarding: allowSplitAwarding !== undefined ? (allowSplitAwarding ? 1 : 0) : (old.AllowSplitAwarding !== undefined ? old.AllowSplitAwarding : (opType === 'توريدات' ? 1 : 0)),
+      technicalCriteriaNotes: technicalCriteriaNotes !== undefined ? technicalCriteriaNotes : (old.TechnicalCriteriaNotes || ''),
+      workflowStatus,
+      status,
+      id
+    });
+
+    await logAudit(req, 'تعديل طلب احتياج', 'NeedsRequests', id, `تم تحديث بيانات طلب الاحتياج رقم ${id} (الحالة: ${workflowStatus})`);
+    res.json({ success: true, message: 'تم تحديث طلب الاحتياج بنجاح', workflowStatus });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE: Archive needs request
+app.delete('/api/needs-requests/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body || {};
+    const existing = await query('SELECT * FROM NeedsRequests WHERE RequestId = @id', { id });
+    if (!existing || existing.length === 0) return res.status(404).json({ error: 'الطلب غير موجود' });
+
+    await query("UPDATE NeedsRequests SET IsDeleted = 1, Status = N'مؤرشف' WHERE RequestId = @id", { id });
+
+    // Also record in ArchivedItems
+    await query(`
+      INSERT INTO ArchivedItems (EntityType, EntityId, EntityData, Reason, ArchivedBy, ArchivedAt)
+      VALUES (N'طلب احتياج', @id, @data, @reason, @archivedBy, CURRENT_TIMESTAMP)
+    `, {
+      id: String(id),
+      data: JSON.stringify(existing[0]),
+      reason: reason || 'حذف ونقل للأرشيف',
+      archivedBy: req.user?.FullName || req.user?.Username || 'النظام'
+    });
+
+    await logAudit(req, 'أرشفة طلب احتياج', 'NeedsRequests', id, `تم نقل طلب الاحتياج رقم ${id} للأرشيف - السبب: ${reason || 'بدون'}`);
+    res.json({ success: true, message: 'تم نقل طلب الاحتياج إلى الأرشيف بنجاح' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

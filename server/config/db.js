@@ -374,9 +374,47 @@ function initSqliteFallback() {
     { table: 'NeedsRequests', column: 'FinancialReviewedBy TEXT' },
     { table: 'NeedsRequests', column: 'AuthorityReviewedAt TEXT' },
     { table: 'NeedsRequests', column: 'AuthorityReviewedBy TEXT' },
+    { table: 'NeedsRequests', column: 'FinancialApprovalObtained INTEGER DEFAULT 0' },
+    { table: 'NeedsRequests', column: 'FinancialApprovalDate TEXT' },
+    { table: 'NeedsRequests', column: 'FinancialApprovalNotes TEXT' },
+    { table: 'NeedsRequests', column: 'BookletFileName TEXT' },
+    { table: 'NeedsRequests', column: 'BookletFilePath TEXT' },
     // SubFileDistribution columns on Tenders
     { table: 'Tenders', column: 'HasSubFileDistribution INTEGER DEFAULT 0' },
     { table: 'Tenders', column: 'SubFileDistributionId INTEGER' },
+    // Booklet document columns on Tenders
+    { table: 'Tenders', column: 'BookletFileName TEXT' },
+    { table: 'Tenders', column: 'BookletFilePath TEXT' },
+    { table: 'Tenders', column: 'BookletFileSize INTEGER DEFAULT 0' },
+    { table: 'Tenders', column: 'BookletUploadedAt TEXT' },
+    { table: 'Tenders', column: 'BookletFileContent TEXT' },
+    // Technical Evaluation System columns for NeedsRequests & Tenders
+    { table: 'NeedsRequests', column: "TechnicalEvaluationMethod TEXT DEFAULT 'مطابق أو غير مطابق'" },
+    { table: 'NeedsRequests', column: 'MinPassingScore REAL DEFAULT 70' },
+    { table: 'NeedsRequests', column: 'AllowSplitAwarding INTEGER DEFAULT 0' },
+    { table: 'NeedsRequests', column: 'TechnicalCriteriaNotes TEXT' },
+    { table: 'Tenders', column: 'AllowSplitAwarding INTEGER DEFAULT 0' },
+    { table: 'Tenders', column: 'TechnicalCriteriaNotes TEXT' },
+    { table: 'TenderItems', column: 'ItemSpecs TEXT' },
+    { table: 'TenderItems', column: 'ItemMaxScore REAL DEFAULT 100' },
+    { table: 'TenderItems', column: 'ItemMinPassingScore REAL DEFAULT 70' },
+    { table: 'TenderItems', column: 'ItemCriteria TEXT' },
+    { table: 'TenderItems', column: 'AllowSplit INTEGER DEFAULT 1' },
+    // Editable sync columns from NeedsRequest to Tenders
+    { table: 'Tenders', column: 'OperationType TEXT DEFAULT "توريدات"' },
+    { table: 'Tenders', column: 'ExecutionDuration TEXT' },
+    { table: 'Tenders', column: 'WarehouseBalance TEXT' },
+    { table: 'Tenders', column: 'SpecsAndConditions TEXT' },
+    { table: 'Tenders', column: 'ReservationType TEXT DEFAULT "موازنة الشركة"' },
+    { table: 'Tenders', column: 'EstimatedValue REAL' },
+    { table: 'Tenders', column: 'ConstructionDivision TEXT' },
+    { table: 'Tenders', column: 'ConstructionCategory TEXT' },
+    { table: 'Tenders', column: 'FinancialApprovalObtained INTEGER DEFAULT 0' },
+    { table: 'Tenders', column: 'FinancialApprovalDate TEXT' },
+    { table: 'Tenders', column: 'FinancialApprovalNotes TEXT' },
+    // Limited Tender / Practice Invited Vendors tracking
+    { table: 'Tenders', column: 'InvitedVendorsCount INTEGER DEFAULT 0' },
+    { table: 'Tenders', column: 'InvitedVendorsJson TEXT' },
   ];
 
   for (const m of migrations) {
@@ -386,6 +424,27 @@ function initSqliteFallback() {
       // Column likely already exists
     }
   }
+
+  // Create TenderInvitedVendors table for limited tenders / practices
+  sqliteDb.exec(`
+    CREATE TABLE IF NOT EXISTS TenderInvitedVendors (
+      InvitedId INTEGER PRIMARY KEY AUTOINCREMENT,
+      TenderId INTEGER NOT NULL,
+      VendorId INTEGER,
+      VendorName TEXT NOT NULL,
+      TaxCardNo TEXT,
+      CommercialRegisterNo TEXT,
+      Phone TEXT,
+      Email TEXT,
+      InvitationMethod TEXT DEFAULT 'بريد مسجل بعلم الوصول',
+      InvitationLetterNo TEXT,
+      InvitationDate TEXT,
+      ResponseStatus TEXT DEFAULT 'تم توجيه الدعوة',
+      Notes TEXT,
+      CreatedAt TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (TenderId) REFERENCES Tenders(TenderId) ON DELETE CASCADE
+    );
+  `);
 
   // Seed default multi-role users if empty
   const userCount = sqliteDb.prepare("SELECT COUNT(*) as count FROM Users").get();

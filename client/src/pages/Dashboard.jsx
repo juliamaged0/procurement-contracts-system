@@ -10,34 +10,30 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   Plus,
-  Trash2
+  Trash2,
+  XCircle,
+  Clock,
+  Eye,
+  Info,
+  X
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [stats, setStats] = useState({
     tendersCount: 0,
     activeSubmissionsCount: 0,
     evaluatedCount: 0,
     awardedCount: 0,
-    blacklistedCount: 0
+    blacklistedCount: 0,
+    rejectedRequestsCount: 0
   });
 
   const [tenders, setTenders] = useState([]);
   const [needsRequests, setNeedsRequests] = useState([]);
-  const [showNeedsModal, setShowNeedsModal] = useState(false);
-
-  const [newRequest, setNewRequest] = useState({
-    operationName: '',
-    operationType: 'تعاقدات',
-    estimatedValue: '',
-    requestingDepartment: 'إدارة شبكات الصرف الصحي',
-    executionDuration: '6 أشهر',
-    fiscalYear: '2025/2026',
-    reservationType: 'موازنة الشركة',
-    initialReservation: '',
-    submittalType: 'مظروفيين'
-  });
+  const [filterMode, setFilterMode] = useState('ALL'); // 'ALL' | 'APPROVED' | 'PENDING' | 'TENDERED' | 'REJECTED'
+  const [selectedRejectedReq, setSelectedRejectedReq] = useState(null);
 
   useEffect(() => {
     fetchDashboardData();
@@ -58,288 +54,390 @@ export default function Dashboard() {
       setTenders(tList);
       setNeedsRequests(nList);
 
+      const rejectedCount = nList.filter(r => r.WorkflowStatus === 'مرفوض' || r.AuthorityApprovalStatus === 'مرفوض').length;
+
       setStats({
         tendersCount: tList.length,
         activeSubmissionsCount: tList.filter(t => t.Status === 'مطروح' || t.Status === 'نشط').length,
         evaluatedCount: tList.filter(t => t.Status === 'مبتوت').length,
         awardedCount: tList.filter(t => t.Status === 'مسند').length,
-        blacklistedCount: vList.filter(v => v.IsBlacklisted).length
+        blacklistedCount: vList.filter(v => v.IsBlacklisted).length,
+        rejectedRequestsCount: rejectedCount
       });
     } catch (err) {
       console.error(err);
     }
   };
 
-  const handleCreateNeedsRequest = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.post('/api/needs-requests', newRequest);
-      setShowNeedsModal(false);
-      fetchDashboardData();
-    } catch (err) {
-      alert('خطأ أثناء حفظ طلب الاحتياج: ' + (err.response?.data?.error || err.message));
-    }
-  };
+  // Filter requests based on tab
+  const filteredRequests = needsRequests.filter(req => {
+    const isRejected = req.WorkflowStatus === 'مرفوض' || req.AuthorityApprovalStatus === 'مرفوض';
+    const isApproved = (req.WorkflowStatus === 'معتمد' || req.AuthorityApprovalStatus === 'معتمد') && !isRejected;
+
+    if (filterMode === 'REJECTED') return isRejected;
+    if (filterMode === 'APPROVED') return isApproved && req.Status !== 'مطروح';
+    if (filterMode === 'TENDERED') return req.Status === 'مطروح';
+    if (filterMode === 'PENDING') return !isRejected && !isApproved;
+    return true;
+  });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" dir="rtl">
       
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-sky-800 via-sky-700 to-cyan-700 text-white rounded-2xl p-6 shadow-xl relative overflow-hidden">
+      <div className="bg-gradient-to-r from-sky-800 via-sky-700 to-indigo-800 text-white rounded-3xl p-6 shadow-xl relative overflow-hidden">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-bold mb-1">
+            <h2 className="text-2xl font-black mb-1">
               مرحباً بك في نظام الدورة المستندية للعقود والمشتريات
             </h2>
-            <p className="text-sky-100 text-sm max-w-2xl">
-              إدارة متكاملة ومؤمنة لكافة شاشات الطرح، فض المظاريف، البت الفني والمالي، الإسناد، وحساب التأمينات والدمغات الرسمية بدقة متناهية.
+            <p className="text-sky-100 text-xs max-w-2xl leading-relaxed">
+              إدارة متكاملة ومؤمنة لكافة شاشات طلبات الاحتياج والاعتماد، الطرح وكراسة الشروط، فض المظاريف، والبت الفني والمالي بدقة متناهية.
             </p>
           </div>
           <button
-            onClick={() => setShowNeedsModal(true)}
-            className="bg-white text-sky-800 hover:bg-sky-50 px-4 py-2.5 rounded-xl font-bold text-sm shadow-md flex items-center gap-2 shrink-0 transition-transform active:scale-95"
+            onClick={() => navigate('/needs-request')}
+            className="bg-white text-sky-900 hover:bg-sky-50 px-5 py-2.5 rounded-2xl font-black text-xs shadow-md flex items-center gap-2 shrink-0 transition-transform active:scale-95"
           >
-            <Plus className="w-5 h-5" />
-            <span>إضافة طلب احتياج جديد</span>
+            <Plus className="w-4 h-4" />
+            <span>تسجيل طلب احتياج جديد</span>
           </button>
         </div>
       </div>
 
       {/* Quick Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0">
-            <FileSpreadsheet className="w-6 h-6" />
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0">
+            <FileSpreadsheet className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs text-slate-500 font-semibold">إجمالي العمليات المطروحة</div>
-            <div className="text-2xl font-bold text-slate-800">{stats.tendersCount}</div>
+            <div className="text-[11px] text-slate-500 font-bold">العمليات المطروحة</div>
+            <div className="text-xl font-black text-slate-800">{stats.tendersCount}</div>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-            <FolderOpen className="w-6 h-6" />
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+            <FolderOpen className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs text-slate-500 font-semibold">مرحلة تفريغ المظاريف</div>
-            <div className="text-2xl font-bold text-slate-800">{stats.activeSubmissionsCount}</div>
+            <div className="text-[11px] text-slate-500 font-bold">تفريغ المظاريف</div>
+            <div className="text-xl font-black text-slate-800">{stats.activeSubmissionsCount}</div>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-            <CheckCircle2 className="w-6 h-6" />
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs text-slate-500 font-semibold">العمليات المبتوت فيها</div>
-            <div className="text-2xl font-bold text-slate-800">{stats.evaluatedCount}</div>
+            <div className="text-[11px] text-slate-500 font-bold">العمليات المبتوتة</div>
+            <div className="text-xl font-black text-slate-800">{stats.evaluatedCount}</div>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-            <FileCheck className="w-6 h-6" />
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+            <FileCheck className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs text-slate-500 font-semibold">العمليات المسندة (أمر توريد)</div>
-            <div className="text-2xl font-bold text-slate-800">{stats.awardedCount}</div>
+            <div className="text-[11px] text-slate-500 font-bold">العمليات المسندة</div>
+            <div className="text-xl font-black text-slate-800">{stats.awardedCount}</div>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-6 h-6" />
+        {/* Dedicated Rejected Requests Card */}
+        <div 
+          onClick={() => setFilterMode('REJECTED')}
+          className={`p-4 rounded-2xl border shadow-sm flex items-center gap-3 cursor-pointer transition-all ${
+            filterMode === 'REJECTED'
+              ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-400'
+              : 'bg-white border-rose-100 hover:border-rose-200'
+          }`}
+          title="اضغط لتصفية وعرض الطلبات المرفوضة"
+        >
+          <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+            <XCircle className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs text-slate-500 font-semibold">شركات بسجل الشطب</div>
-            <div className="text-2xl font-bold text-rose-600 font-mono">{stats.blacklistedCount}</div>
+            <div className="text-[11px] text-rose-700 font-bold">الطلبات المرفوضة</div>
+            <div className="text-xl font-black text-rose-700">{stats.rejectedRequestsCount}</div>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-[11px] text-slate-500 font-bold">سجل الشطب</div>
+            <div className="text-xl font-black text-slate-800">{stats.blacklistedCount}</div>
           </div>
         </div>
 
       </div>
 
-      {/* Needs Requests Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="font-bold text-slate-800 flex items-center gap-2 text-base">
+      {/* Needs Requests Section with Quick Status Filters */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden space-y-4 p-5">
+        <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b">
+          <div className="flex items-center gap-2">
             <ArrowRightLeft className="w-5 h-5 text-sky-600" />
-            <span>طلبات الاحتياج الواردة المستدعادة للطرح</span>
-          </h3>
-          <span className="text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full font-semibold">
-            {needsRequests.length} طلبات
-          </span>
+            <h3 className="font-black text-slate-800 text-base">
+              طلبات الاحتياج وموقف الطرح والاعتماد
+            </h3>
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => setFilterMode('ALL')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filterMode === 'ALL'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              الكل ({needsRequests.length})
+            </button>
+
+            <button
+              onClick={() => setFilterMode('APPROVED')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filterMode === 'APPROVED'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              }`}
+            >
+              جاهزة للطرح ({needsRequests.filter(r => (r.WorkflowStatus === 'معتمد' || r.AuthorityApprovalStatus === 'معتمد') && r.Status !== 'مطروح' && r.WorkflowStatus !== 'مرفوض').length})
+            </button>
+
+            <button
+              onClick={() => setFilterMode('PENDING')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filterMode === 'PENDING'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+              }`}
+            >
+              قيد المراجعة ({needsRequests.filter(r => r.WorkflowStatus !== 'معتمد' && r.WorkflowStatus !== 'مرفوض' && r.AuthorityApprovalStatus !== 'مرفوض').length})
+            </button>
+
+            <button
+              onClick={() => setFilterMode('TENDERED')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filterMode === 'TENDERED'
+                  ? 'bg-sky-600 text-white shadow-sm'
+                  : 'bg-sky-50 text-sky-700 hover:bg-sky-100'
+              }`}
+            >
+              تم طرحها ({needsRequests.filter(r => r.Status === 'مطروح').length})
+            </button>
+
+            <button
+              onClick={() => setFilterMode('REJECTED')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filterMode === 'REJECTED'
+                  ? 'bg-rose-600 text-white shadow-sm'
+                  : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+              }`}
+            >
+              الطلبات المرفوضة ❌ ({stats.rejectedRequestsCount})
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-right text-sm">
-            <thead className="bg-slate-50 text-slate-600 text-xs font-bold uppercase border-b border-slate-200">
+          <table className="w-full text-right text-xs">
+            <thead className="bg-slate-50 text-slate-600 font-bold uppercase border-b border-slate-200">
               <tr>
-                <th className="p-3.5">#</th>
-                <th className="p-3.5">اسم العملية</th>
-                <th className="p-3.5">النوع</th>
-                <th className="p-3.5">القيمة التقديرية</th>
-                <th className="p-3.5">الجهة الطالبة</th>
-                <th className="p-3.5">العام المالي</th>
-                <th className="p-3.5">الحالة</th>
-                <th className="p-3.5 text-center">الإجراء</th>
+                <th className="p-3">#</th>
+                <th className="p-3">اسم العملية</th>
+                <th className="p-3">النوع</th>
+                <th className="p-3">القيمة التقديرية</th>
+                <th className="p-3">الجهة الطالبة</th>
+                <th className="p-3">العام المالي</th>
+                <th className="p-3">حالة الاعتماد</th>
+                <th className="p-3 text-center">الإجراء / الطرح</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {needsRequests.length === 0 ? (
+              {filteredRequests.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="p-6 text-center text-slate-400">
-                    لا توجد طلبات احتياج حالية. قم بإضافة طلب جديد للبدء.
+                  <td colSpan={8} className="p-8 text-center text-slate-400">
+                    لا توجد طلبات في هذا التصنيف حالياً.
                   </td>
                 </tr>
               ) : (
-                needsRequests.map((req) => (
-                  <tr key={req.RequestId} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="p-3.5 font-bold text-slate-500">#{req.RequestId}</td>
-                    <td className="p-3.5 font-bold text-slate-800">{req.OperationName}</td>
-                    <td className="p-3.5">
-                      <span className="bg-sky-50 text-sky-700 px-2.5 py-0.5 rounded-md text-xs font-bold border border-sky-200">
-                        {req.OperationType}
-                      </span>
-                    </td>
-                    <td className="p-3.5 font-mono font-bold text-emerald-700">
-                      {req.EstimatedValue?.toLocaleString()} ج.م
-                    </td>
-                    <td className="p-3.5 text-slate-600">{req.RequestingDepartment}</td>
-                    <td className="p-3.5 font-mono">{req.FiscalYear}</td>
-                    <td className="p-3.5">
-                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                        req.Status === 'مطروح' ? 'bg-emerald-100 text-emerald-800' :
-                        req.Status === 'مسند' ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
-                      }`}>
-                        {req.Status}
-                      </span>
-                    </td>
-                    <td className="p-3.5 text-center flex items-center justify-center gap-1.5">
-                      {req.Status === 'معلق' ? (
-                        <Link
-                          to={`/tenders?requestId=${req.RequestId}`}
-                          className="bg-sky-600 hover:bg-sky-700 text-white text-xs px-2.5 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 shadow-sm"
-                        >
-                          <span>طرح ⚡</span>
-                        </Link>
-                      ) : (
-                        <span className="text-xs text-slate-400 font-semibold px-2 py-1">تم الطرح</span>
-                      )}
+                filteredRequests.map((req) => {
+                  const isRejected = req.WorkflowStatus === 'مرفوض' || req.AuthorityApprovalStatus === 'مرفوض';
+                  const isApproved = (req.WorkflowStatus === 'معتمد' || req.AuthorityApprovalStatus === 'معتمد') && !isRejected;
+                  const isTendered = req.Status === 'مطروح';
 
-                      <button
-                        onClick={async () => {
-                          const reason = prompt('يرجى كتابة سبب حذف طلب الاحتياج ونقله للأرشيف:');
-                          if (reason !== null) {
-                            try {
-                              await axios.delete(`/api/needs-requests/${req.RequestId}`, { data: { reason } });
-                              alert('تم نقل طلب الاحتياج إلى الأرشيف بنجاح 🗄️');
-                              fetchDashboardData();
-                            } catch (err) {
-                              alert('خطأ: ' + (err.response?.data?.error || err.message));
-                            }
-                          }
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                        title="حذف ونقل للأرشيف"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                  return (
+                    <tr key={req.RequestId} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-3 font-mono font-bold text-slate-400">#{req.RequestId}</td>
+                      <td className="p-3">
+                        <div className="font-bold text-slate-800 text-sm">{req.OperationName}</div>
+                        {req.FinancialOperationNumber && (
+                          <div className="text-[10px] font-mono text-indigo-600 font-bold">
+                            رقم: {req.FinancialOperationNumber}
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-3">
+                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[11px] font-bold">
+                          {req.OperationType}
+                        </span>
+                      </td>
+                      <td className="p-3 font-mono font-bold text-emerald-700">
+                        {req.EstimatedValue ? `${Number(req.EstimatedValue).toLocaleString()} ج.م` : '---'}
+                      </td>
+                      <td className="p-3 text-slate-600 font-medium">{req.RequestingDepartment}</td>
+                      <td className="p-3 font-mono text-slate-500">{req.FiscalYear}</td>
+                      <td className="p-3">
+                        {isRejected ? (
+                          <div className="space-y-0.5">
+                            <span className="bg-rose-100 text-rose-800 border border-rose-300 px-2.5 py-0.5 rounded-full text-[11px] font-bold inline-flex items-center gap-1">
+                              <X className="w-3 h-3 text-rose-600" />
+                              <span>مرفوض</span>
+                            </span>
+                            {req.AuthorityRejectionReason && (
+                              <div className="text-[10px] text-rose-700 truncate max-w-[180px]" title={req.AuthorityRejectionReason}>
+                                السبب: {req.AuthorityRejectionReason}
+                              </div>
+                            )}
+                          </div>
+                        ) : isApproved ? (
+                          <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5 rounded-full text-[11px] font-bold inline-flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            <span>معتمد</span>
+                          </span>
+                        ) : (
+                          <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2.5 py-0.5 rounded-full text-[11px] font-bold inline-flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-amber-600" />
+                            <span>قيد الاعتماد</span>
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {/* CRITICAL: Never show Tender button if rejected! */}
+                          {isRejected ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedRejectedReq(req)}
+                              className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs px-2.5 py-1 rounded-lg font-bold inline-flex items-center gap-1 transition-colors"
+                              title="عرض تفاصيل وسبب الرفض"
+                            >
+                              <Info className="w-3.5 h-3.5" />
+                              <span>مرفوض (تفاصيل)</span>
+                            </button>
+                          ) : isTendered ? (
+                            <span className="text-xs text-sky-700 bg-sky-50 border border-sky-200 px-2 py-1 rounded-lg font-bold">
+                              تم الطرح ✓
+                            </span>
+                          ) : isApproved ? (
+                            <Link
+                              to={`/tenders?requestId=${req.RequestId}`}
+                              className="bg-sky-600 hover:bg-sky-700 text-white text-xs px-3 py-1 rounded-lg font-bold inline-flex items-center gap-1 shadow-sm transition-all"
+                            >
+                              <span>طرح ⚡</span>
+                            </Link>
+                          ) : (
+                            <span className="text-xs text-slate-400 bg-slate-50 px-2 py-1 rounded-lg font-medium">
+                              في انتظار الاعتماد
+                            </span>
+                          )}
+
+                          <button
+                            onClick={async () => {
+                              const reason = prompt('يرجى كتابة سبب حذف طلب الاحتياج ونقله للأرشيف:');
+                              if (reason !== null) {
+                                try {
+                                  await axios.delete(`/api/needs-requests/${req.RequestId}`, { data: { reason } });
+                                  alert('تم نقل طلب الاحتياج إلى الأرشيف بنجاح 🗄️');
+                                  fetchDashboardData();
+                                } catch (err) {
+                                  alert('خطأ: ' + (err.response?.data?.error || err.message));
+                                }
+                              }
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="حذف ونقل للأرشيف"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Modal: New Needs Request */}
-      {showNeedsModal && (
+      {/* Modal: View Rejection Details */}
+      {selectedRejectedReq && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 border border-slate-200">
-            <h3 className="text-lg font-bold text-slate-800 border-b pb-3">
-              إضافة طلب احتياج جديد (استدعاء للطرح)
-            </h3>
-            
-            <form onSubmit={handleCreateNeedsRequest} className="space-y-4 text-right">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اسم العملية المطلوبة</label>
-                <input
-                  type="text"
-                  required
-                  value={newRequest.operationName}
-                  onChange={(e) => setNewRequest({ ...newRequest, operationName: e.target.value })}
-                  placeholder="مثال: توريد مواسير زهر محطات الصرف الصحي"
-                  className="w-full px-3.5 py-2 border rounded-xl text-sm focus:ring-2 focus:ring-sky-500 outline-none"
-                />
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-rose-200 animate-fadeIn">
+            <div className="flex items-center justify-between pb-3 border-b">
+              <div className="flex items-center gap-2 text-rose-700 font-black text-base">
+                <XCircle className="w-5 h-5" />
+                <span>تفاصيل رفض طلب الاحتياج #{selectedRejectedReq.RequestId}</span>
+              </div>
+              <button
+                onClick={() => setSelectedRejectedReq(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-slate-50 rounded-xl space-y-1">
+                <div className="text-slate-500 font-bold">اسم العملية:</div>
+                <div className="text-sm font-black text-slate-800">{selectedRejectedReq.OperationName}</div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">نوع العملية</label>
-                  <select
-                    value={newRequest.operationType}
-                    onChange={(e) => setNewRequest({ ...newRequest, operationType: e.target.value })}
-                    className="w-full px-3.5 py-2 border rounded-xl text-sm focus:ring-2 focus:ring-sky-500 outline-none"
-                  >
-                    <option value="تعاقدات">تعاقدات (أعمال)</option>
-                    <option value="توريدات">توريدات (مهمات)</option>
-                    <option value="مزادات">مزادات</option>
-                  </select>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2.5 bg-slate-50 rounded-xl">
+                  <div className="text-slate-500 font-bold">الجهة الطالبة:</div>
+                  <div className="font-bold text-slate-700">{selectedRejectedReq.RequestingDepartment}</div>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">القيمة التقديرية (ج.م)</label>
-                  <input
-                    type="number"
-                    required
-                    value={newRequest.estimatedValue}
-                    onChange={(e) => setNewRequest({ ...newRequest, estimatedValue: e.target.value })}
-                    placeholder="مثال: 500000"
-                    className="w-full px-3.5 py-2 border rounded-xl text-sm font-mono focus:ring-2 focus:ring-sky-500 outline-none"
-                  />
+                <div className="p-2.5 bg-slate-50 rounded-xl">
+                  <div className="text-slate-500 font-bold">تاريخ الرفض:</div>
+                  <div className="font-bold text-slate-700 font-mono">{selectedRejectedReq.AuthorityApprovalDate || selectedRejectedReq.AuthorityReviewedAt || '---'}</div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">الجهة الطالبة</label>
-                  <input
-                    type="text"
-                    required
-                    value={newRequest.requestingDepartment}
-                    onChange={(e) => setNewRequest({ ...newRequest, requestingDepartment: e.target.value })}
-                    className="w-full px-3.5 py-2 border rounded-xl text-sm focus:ring-2 focus:ring-sky-500 outline-none"
-                  />
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl space-y-1.5">
+                <div className="text-rose-800 font-black flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600" />
+                  <span>سبب الرفض المسجل من السلطة المختصة:</span>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">مدة العملية</label>
-                  <input
-                    type="text"
-                    value={newRequest.executionDuration}
-                    onChange={(e) => setNewRequest({ ...newRequest, executionDuration: e.target.value })}
-                    className="w-full px-3.5 py-2 border rounded-xl text-sm focus:ring-2 focus:ring-sky-500 outline-none"
-                  />
-                </div>
+                <p className="text-rose-900 leading-relaxed font-bold bg-white p-3 rounded-lg border border-rose-200">
+                  {selectedRejectedReq.AuthorityRejectionReason || 'لم يتم تسجيل سبب تفصيلي'}
+                </p>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowNeedsModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-sm font-semibold"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-sm font-bold shadow-md"
-                >
-                  حفظ الاستدعاء
-                </button>
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 leading-relaxed font-medium">
+                💡 <span className="font-bold">الإجراء المتبع:</span> هذا الطلب مرفوض نهائياً ولا يتاح للطرح. يتوجب على الإدارة الطالبة إعداد طلب احتياج جديد تماماً وتقديمه من البداية.
               </div>
-            </form>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedRejectedReq(null)}
+                className="px-5 py-2 bg-slate-800 text-white rounded-xl text-xs font-bold hover:bg-slate-700 transition-colors"
+              >
+                إغلاق
+              </button>
+            </div>
           </div>
         </div>
       )}

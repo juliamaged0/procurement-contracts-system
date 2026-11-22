@@ -23,9 +23,7 @@ export default function Sidebar() {
   const { user } = useAuth();
 
   const workflowItems = [
-    { to: '/needs-request', label: 'أ. طلب الاحتياج', icon: ClipboardList, roles: ['Admin', 'TenderOfficer', 'CommitteeMember', 'FinancialAuditor', 'VendorManager', 'Auditor'] },
-    { to: '/financial-review', label: 'ب. المراجعة المالية', icon: DollarSign, roles: ['Admin', 'FinancialAuditor'] },
-    { to: '/authority-approval', label: 'ج. موافقة السلطة', icon: ShieldApproval, roles: ['Admin', 'TenderOfficer', 'FinancialAuditor', 'CommitteeMember', 'VendorManager', 'Auditor'] },
+    { to: '/needs-request', label: 'طلب الاحتياج والاعتماد الشامل', icon: ClipboardList, roles: ['Admin', 'TenderOfficer', 'CommitteeMember', 'FinancialAuditor', 'VendorManager', 'Auditor'] },
   ];
 
   const mainNavItems = [

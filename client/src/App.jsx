@@ -108,24 +108,12 @@ export default function App() {
 
           <Route
             path="/financial-review"
-            element={
-              <ProtectedRoute allowedRoles={['FinancialAuditor']}>
-                <MainLayout>
-                  <FinancialReview />
-                </MainLayout>
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/needs-request" replace />}
           />
 
           <Route
             path="/authority-approval"
-            element={
-              <ProtectedRoute>
-                <MainLayout>
-                  <AuthorityApproval />
-                </MainLayout>
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/needs-request" replace />}
           />
 
           {/* ===== EXISTING PAGES ===== */}
