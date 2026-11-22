@@ -142,13 +142,39 @@ CREATE TABLE Tenders (
     PassingScoreDecimal DECIMAL(5,2),
     RequiresSample BIT DEFAULT 0,
     SampleDetails NVARCHAR(500),
+    
+    -- Sync columns from NeedsRequests & Technical Evaluation System
+    OperationType NVARCHAR(50) DEFAULT N'توريدات',
+    ExecutionDuration NVARCHAR(100),
+    WarehouseBalance NVARCHAR(200),
+    SpecsAndConditions NVARCHAR(MAX),
+    ReservationType NVARCHAR(100) DEFAULT N'موازنة الشركة',
+    EstimatedValue DECIMAL(18,2),
+    ConstructionDivision NVARCHAR(100),
+    ConstructionCategory NVARCHAR(50),
+    FinancialApprovalObtained BIT DEFAULT 0,
+    FinancialApprovalDate DATE,
+    FinancialApprovalNotes NVARCHAR(500),
+    AllowSplitAwarding BIT DEFAULT 0,
+    TechnicalCriteriaNotes NVARCHAR(MAX),
+    
+    -- Booklet Document Attachment
+    BookletFileName NVARCHAR(300),
+    BookletFilePath NVARCHAR(500),
+    BookletFileSize BIGINT DEFAULT 0,
+    BookletUploadedAt DATETIME,
+    
+    -- Limited Tender / Practice Invited Vendors Tracking
+    InvitedVendorsCount INT DEFAULT 0,
+    InvitedVendorsJson NVARCHAR(MAX),
+    
     Status NVARCHAR(50) DEFAULT N'نشط' CHECK (Status IN (N'نشط', N'مفضوض المظاريف', N'مبتوت', N'مسند', N'مكتمل التوريد والتسليم', N'ملغى', N'مؤرشف')),
     IsDeleted BIT DEFAULT 0,
     CreatedAt DATETIME DEFAULT GETDATE()
 );
 
 -- ============================================================================
--- 6. TENDER ITEMS (جدول بنود الطرح والكميات التقديرية)
+-- 6. TENDER ITEMS (جدول بنود الطرح والكميات التقديرية ونظام النقاط)
 -- ============================================================================
 IF OBJECT_ID('TenderItems', 'U') IS NOT NULL DROP TABLE TenderItems;
 CREATE TABLE TenderItems (
@@ -160,7 +186,33 @@ CREATE TABLE TenderItems (
     EstimatedQuantity DECIMAL(18,3) NOT NULL,
     EstimatedUnitPrice DECIMAL(18,2) NOT NULL,
     EstimatedTotalPrice AS (EstimatedQuantity * EstimatedUnitPrice) PERSISTED,
-    Notes NVARCHAR(300)
+    Notes NVARCHAR(300),
+    ItemSpecs NVARCHAR(MAX),
+    ItemMaxScore DECIMAL(5,2) DEFAULT 100,
+    ItemMinPassingScore DECIMAL(5,2) DEFAULT 70,
+    ItemCriteria NVARCHAR(MAX), -- JSON Rubric with options and scores: ألماني 20، أوروبي 30...
+    AllowSplit BIT DEFAULT 1
+);
+
+-- ============================================================================
+-- 6.1 TENDER INVITED VENDORS (جدول الموردين والمقاولين الموجه إليهم الدعوة)
+-- ============================================================================
+IF OBJECT_ID('TenderInvitedVendors', 'U') IS NOT NULL DROP TABLE TenderInvitedVendors;
+CREATE TABLE TenderInvitedVendors (
+    InvitedId INT IDENTITY(1,1) PRIMARY KEY,
+    TenderId INT NOT NULL FOREIGN KEY REFERENCES Tenders(TenderId) ON DELETE CASCADE,
+    VendorId INT FOREIGN KEY REFERENCES Vendors(VendorId),
+    VendorName NVARCHAR(200) NOT NULL,
+    TaxCardNo NVARCHAR(50),
+    CommercialRegisterNo NVARCHAR(50),
+    Phone NVARCHAR(50),
+    Email NVARCHAR(100),
+    InvitationMethod NVARCHAR(100) DEFAULT N'بريد مسجل بعلم الوصول',
+    InvitationLetterNo NVARCHAR(100),
+    InvitationDate DATE,
+    ResponseStatus NVARCHAR(100) DEFAULT N'تم توجيه الدعوة',
+    Notes NVARCHAR(500),
+    CreatedAt DATETIME DEFAULT GETDATE()
 );
 
 -- ============================================================================
