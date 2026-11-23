@@ -7,7 +7,7 @@ import {
   AlertCircle, ChevronRight, Warehouse, Eye, Search, Plus, Trash2,
   RotateCcw, FileText, ArrowRight, Stamp, Clock, Calendar, Check,
   X, AlertTriangle, Layers, Send, Award, Sliders, ChevronDown, ChevronUp,
-  FileCheck2, CheckSquare, Sparkles
+  FileCheck2, CheckSquare, Sparkles, Upload, Download, Paperclip, Calculator, FileUp
 } from 'lucide-react';
 
 const DEPARTMENTS = [
@@ -86,16 +86,24 @@ export default function NeedsRequest() {
     operationType: 'تعاقدات',
     requestingDepartment: '',
     executionDuration: '',
+    executionDurationValue: '',
+    executionDurationUnit: 'أشهر',
     fiscalYear: '2025/2026',
     specsAndConditions: '',
+    specsFileName: '',
+    specsFilePath: '',
+    specsFileData: null,
+    specsFileSize: 0,
     requiresSample: false,
     sampleDetails: '',
     warehouseBalance: 'لا يوجد رصيد بالمخازن',
+    hasWarehouseBalance: false,
+    warehouseBalanceDetails: '',
 
-    // Technical Evaluation Method & Split Awarding
+    // Technical Evaluation Method (مطابق/غير مطابق أو نظام نقاط)
     technicalEvaluationMethod: 'مطابق أو غير مطابق', // 'مطابق أو غير مطابق' | 'نظام نقاط'
     minPassingScore: 70, // الحد الأدنى لدرجات القبول الفني للعملية
-    allowSplitAwarding: false, // هل تقبل العملية التجزئة والترسية لكل بند لمورد مختلف؟
+    allowSplitAwarding: false, // لا تقبل التجزئة في التعاقدات ومتروكة لصفحة الطرح
     technicalCriteriaNotes: 'المواصفات الفنية والكفاءة (40 نقطة)، سابقة الأعمال والخبرة (30 نقطة)، الضمان والصيانة (20 نقطة)، سرعة التوريد والتنفيذ (10 نقاط)',
 
     // Section 2: Financial Details & Items
@@ -105,6 +113,8 @@ export default function NeedsRequest() {
     reservationTypeNew: 'جاري',
     budgetHoldReference: '',
     initialGuaranteePercent: 2,
+    initialGuaranteeAmount: '',
+    guaranteeInputMode: 'percent', // 'percent' | 'amount'
     submittalType: 'مظروفيين',
     bookletPrice: '',
     constructionDivision: '',
@@ -112,10 +122,12 @@ export default function NeedsRequest() {
     operationTerms: '',
     financialNotes: '',
 
-    // Section 3: Paper Approvals & Authority Decision
-    financialApprovalObtained: true, // هل أخذ موافقة مالية ورقية؟
+    // Section 3: Financial Position & Paper Approvals
+    financialStatus: 'APPROVED', // 'APPROVED' | 'PENDING' | 'REJECTED'
+    financialApprovalObtained: true, // هل أخذ موافقة مالية؟
     financialApprovalDate: new Date().toISOString().split('T')[0],
     financialApprovalNotes: '',
+    financialOfficerName: '',
     approvalAuthority: '',
     authorityApprovalStatus: 'معتمد', // 'معتمد' | 'مرفوض' | 'في انتظار الموافقة'
     authorityApprovalDate: new Date().toISOString().split('T')[0],
@@ -206,9 +218,131 @@ export default function NeedsRequest() {
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
+    setFormData(prev => {
+      const updated = {
+        ...prev,
+        [name]: type === 'checkbox' ? checked : value
+      };
+      // When estimatedValue changes, sync initial guarantee amount
+      if (name === 'estimatedValue') {
+        const est = parseFloat(value) || 0;
+        const pct = parseFloat(prev.initialGuaranteePercent) || 2;
+        if (est > 0) {
+          updated.initialGuaranteeAmount = Math.round((est * pct) / 100);
+        }
+      }
+      return updated;
+    });
+  };
+
+  // Execution Duration Dual Handler (Number + Unit Dropdown)
+  const handleDurationChange = (val, unit) => {
+    const v = val !== undefined ? val : formData.executionDurationValue;
+    const u = unit !== undefined ? unit : formData.executionDurationUnit;
+    const combined = v ? `${v} ${u}` : '';
     setFormData(prev => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value
+      executionDurationValue: v,
+      executionDurationUnit: u,
+      executionDuration: combined
+    }));
+  };
+
+  // Warehouse Balance Checkbox Handler
+  const handleWarehouseCheckbox = (checked) => {
+    setFormData(prev => ({
+      ...prev,
+      hasWarehouseBalance: checked,
+      warehouseBalance: checked ? (prev.warehouseBalanceDetails.trim() || 'يوجد رصيد بالمخازن') : 'لا يوجد رصيد بالمخازن'
+    }));
+  };
+
+  const handleWarehouseDetailsChange = (details) => {
+    setFormData(prev => ({
+      ...prev,
+      warehouseBalanceDetails: details,
+      warehouseBalance: details.trim() ? details : 'يوجد رصيد بالمخازن'
+    }));
+  };
+
+  // Specs Documentation Upload & Remove Handlers
+  const handleSpecsFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      alert('حجم الملف كبير جداً، الحد الأقصى المسموح به هو 20 ميجابايت');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setFormData(prev => ({
+        ...prev,
+        specsFileName: file.name,
+        specsFileData: reader.result,
+        specsFileSize: file.size,
+        specsFilePath: '' // populated on backend save
+      }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveSpecsFile = () => {
+    setFormData(prev => ({
+      ...prev,
+      specsFileName: '',
+      specsFilePath: '',
+      specsFileData: null,
+      specsFileSize: 0
+    }));
+  };
+
+  // Booklet Price Calculator (Law 182 Guidelines)
+  const handleCalculateStandardBookletPrice = () => {
+    const val = parseFloat(formData.estimatedValue) || 0;
+    let price = 500;
+    if (val <= 100000) price = 250;
+    else if (val <= 500000) price = 500;
+    else if (val <= 1000000) price = 1000;
+    else if (val <= 5000000) price = 2000;
+    else price = 5000;
+
+    setFormData(prev => ({ ...prev, bookletPrice: price }));
+  };
+
+  // Initial Guarantee Sync Handlers (Percent vs Cash Amount)
+  const handleGuaranteePercentChange = (valOrEvent) => {
+    const raw = (valOrEvent && typeof valOrEvent === 'object' && valOrEvent.target) ? valOrEvent.target.value : valOrEvent;
+    const pct = parseFloat(raw) || 0;
+    const est = parseFloat(formData.estimatedValue) || 0;
+    const amt = est > 0 ? Math.round((est * pct) / 100) : '';
+    setFormData(prev => ({
+      ...prev,
+      initialGuaranteePercent: raw,
+      initialGuaranteeAmount: amt > 0 ? amt : ''
+    }));
+  };
+
+  const handleGuaranteeAmountChange = (valOrEvent) => {
+    const raw = (valOrEvent && typeof valOrEvent === 'object' && valOrEvent.target) ? valOrEvent.target.value : valOrEvent;
+    const amt = parseFloat(raw) || 0;
+    const est = parseFloat(formData.estimatedValue) || 0;
+    setFormData(prev => {
+      const pct = est > 0 ? parseFloat(((amt / est) * 100).toFixed(2)) : prev.initialGuaranteePercent;
+      return {
+        ...prev,
+        initialGuaranteeAmount: raw,
+        initialGuaranteePercent: est > 0 ? pct : prev.initialGuaranteePercent
+      };
+    });
+  };
+
+  // Financial Position Status Selector
+  const handleFinancialStatusSelect = (status) => {
+    setFormData(prev => ({
+      ...prev,
+      financialStatus: status,
+      financialApprovalObtained: status === 'APPROVED',
+      financialApprovalNotes: status === 'REJECTED' ? (prev.financialApprovalNotes || 'اعتذار لعدم توفر اعتماد مالي بالموازنة') : prev.financialApprovalNotes
     }));
   };
 
@@ -358,20 +492,53 @@ export default function NeedsRequest() {
       } catch (e) {}
     }
 
+    // Parse duration into number + unit
+    const rawDur = req.ExecutionDuration || '';
+    const numMatch = rawDur.match(/\d+/);
+    const durVal = numMatch ? numMatch[0] : '';
+    let durUnit = 'أشهر';
+    if (/يوم|ايام|أيام/.test(rawDur)) durUnit = 'أيام';
+    else if (/اسبوع|أسبوع|اسابيع|أسابيع/.test(rawDur)) durUnit = 'أسابيع';
+    else if (/شهر|اشهر|أشهر/.test(rawDur)) durUnit = 'أشهر';
+    else if (/سنة|سنوات|عام|اعوام|أعوام/.test(rawDur)) durUnit = 'سنوات';
+
+    // Parse warehouse balance
+    const rawWh = req.WarehouseBalance || '';
+    const hasWh = Boolean(rawWh && rawWh !== 'لا يوجد رصيد بالمخازن' && rawWh !== 'صفر' && rawWh.trim() !== '');
+
+    // Parse initial guarantee amount
+    const estVal = parseFloat(req.EstimatedValue) || 0;
+    const gPct = parseFloat(req.InitialGuaranteePercent) || 2;
+    const gAmt = estVal > 0 ? Math.round((estVal * gPct) / 100) : '';
+
+    // Parse financial position
+    let finStatus = 'APPROVED';
+    if (req.FinancialApprovalObtained === 0) {
+      finStatus = req.WorkflowStatus === 'مرفوض' ? 'REJECTED' : 'PENDING';
+    }
+
     setFormData({
       operationName: req.OperationName || '',
       operationType: req.OperationType || 'تعاقدات',
       requestingDepartment: req.RequestingDepartment || '',
       executionDuration: req.ExecutionDuration || '',
+      executionDurationValue: durVal,
+      executionDurationUnit: durUnit,
       fiscalYear: req.FiscalYear || '2025/2026',
       specsAndConditions: req.SpecsAndConditions || '',
+      specsFileName: req.SpecsFileName || req.BookletFileName || '',
+      specsFilePath: req.SpecsFilePath || req.BookletFilePath || '',
+      specsFileData: null,
+      specsFileSize: 0,
       requiresSample: Boolean(req.RequiresSample),
       sampleDetails: req.SampleDetails || '',
       warehouseBalance: req.WarehouseBalance || 'لا يوجد رصيد بالمخازن',
+      hasWarehouseBalance: hasWh,
+      warehouseBalanceDetails: hasWh ? rawWh : '',
 
       technicalEvaluationMethod: req.TechnicalEvaluationMethod || 'مطابق أو غير مطابق',
       minPassingScore: req.MinPassingScore || 70,
-      allowSplitAwarding: req.AllowSplitAwarding !== undefined ? Boolean(req.AllowSplitAwarding) : (req.OperationType === 'توريدات'),
+      allowSplitAwarding: false,
       technicalCriteriaNotes: req.TechnicalCriteriaNotes || '',
 
       tenderMethodSelected: req.TenderMethodSelected || 'مناقصة عامة',
@@ -380,6 +547,8 @@ export default function NeedsRequest() {
       reservationTypeNew: req.ReservationTypeNew || 'جاري',
       budgetHoldReference: req.BudgetHoldReference || '',
       initialGuaranteePercent: req.InitialGuaranteePercent || 2,
+      initialGuaranteeAmount: gAmt,
+      guaranteeInputMode: 'percent',
       submittalType: req.SubmittalType || 'مظروفيين',
       bookletPrice: req.BookletPrice || '',
       constructionDivision: req.ConstructionDivision || '',
@@ -387,9 +556,11 @@ export default function NeedsRequest() {
       operationTerms: req.OperationTerms || '',
       financialNotes: req.FinancialNotes || '',
 
+      financialStatus: finStatus,
       financialApprovalObtained: req.FinancialApprovalObtained !== 0,
       financialApprovalDate: req.FinancialApprovalDate || new Date().toISOString().split('T')[0],
       financialApprovalNotes: req.FinancialApprovalNotes || '',
+      financialOfficerName: req.FinancialReviewedBy || '',
       approvalAuthority: req.ApprovalAuthority || '',
       authorityApprovalStatus: req.AuthorityApprovalStatus || (req.WorkflowStatus === 'مرفوض' ? 'مرفوض' : 'معتمد'),
       authorityApprovalDate: req.AuthorityApprovalDate || new Date().toISOString().split('T')[0],
@@ -421,11 +592,19 @@ export default function NeedsRequest() {
       operationType: 'تعاقدات',
       requestingDepartment: '',
       executionDuration: '',
+      executionDurationValue: '',
+      executionDurationUnit: 'أشهر',
       fiscalYear: '2025/2026',
       specsAndConditions: '',
+      specsFileName: '',
+      specsFilePath: '',
+      specsFileData: null,
+      specsFileSize: 0,
       requiresSample: false,
       sampleDetails: '',
       warehouseBalance: 'لا يوجد رصيد بالمخازن',
+      hasWarehouseBalance: false,
+      warehouseBalanceDetails: '',
       technicalEvaluationMethod: 'مطابق أو غير مطابق',
       minPassingScore: 70,
       allowSplitAwarding: false,
@@ -436,15 +615,19 @@ export default function NeedsRequest() {
       reservationTypeNew: 'جاري',
       budgetHoldReference: '',
       initialGuaranteePercent: 2,
+      initialGuaranteeAmount: '',
+      guaranteeInputMode: 'percent',
       submittalType: 'مظروفيين',
       bookletPrice: '',
       constructionDivision: '',
       constructionCategory: '',
       operationTerms: '',
       financialNotes: '',
+      financialStatus: 'APPROVED',
       financialApprovalObtained: true,
       financialApprovalDate: new Date().toISOString().split('T')[0],
       financialApprovalNotes: '',
+      financialOfficerName: '',
       approvalAuthority: '',
       authorityApprovalStatus: 'معتمد',
       authorityApprovalDate: new Date().toISOString().split('T')[0],
@@ -680,27 +863,70 @@ export default function NeedsRequest() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">مدة التنفيذ أو التوريد</label>
-                  <input
-                    type="text"
-                    name="executionDuration"
-                    value={formData.executionDuration}
-                    onChange={handleInputChange}
-                    placeholder="مثال: 3 أشهر / 90 يوماً"
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    مدة التنفيذ أو التوريد *
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      name="executionDurationValue"
+                      value={formData.executionDurationValue || ''}
+                      onChange={(e) => handleDurationChange(e.target.value, formData.executionDurationUnit)}
+                      placeholder="العدد (مثال: 3)"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                    <select
+                      name="executionDurationUnit"
+                      value={formData.executionDurationUnit || 'شهر'}
+                      onChange={(e) => handleDurationChange(formData.executionDurationValue, e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium"
+                    >
+                      <option value="يوم">يوم / أيام</option>
+                      <option value="أسبوع">أسبوع / أسابيع</option>
+                      <option value="شهر">شهر / أشهر</option>
+                      <option value="سنة">سنة / سنوات</option>
+                    </select>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1 font-mono">
+                    المدة المسجلة: <span className="font-bold text-indigo-700">{formData.executionDuration || 'لم تحدد'}</span>
+                  </p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">موقف رصيد المخزن</label>
-                  <input
-                    type="text"
-                    name="warehouseBalance"
-                    value={formData.warehouseBalance}
-                    onChange={handleInputChange}
-                    placeholder="مثال: لا يوجد رصيد بالمخازن"
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    موقف رصيد المخزن (المادة 19) *
+                  </label>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.hasWarehouseBalance}
+                        onChange={(e) => handleWarehouseCheckbox(e.target.checked)}
+                        className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-slate-800">
+                        {formData.hasWarehouseBalance ? 'يوجد رصيد متوفر بالمخازن' : 'لا يوجد رصيد بالمخازن (تم الفحص والتحقق)'}
+                      </span>
+                    </label>
+
+                    {formData.hasWarehouseBalance ? (
+                      <div>
+                        <input
+                          type="text"
+                          value={formData.warehouseBalanceDetails || ''}
+                          onChange={(e) => handleWarehouseDetailsChange(e.target.value)}
+                          placeholder="حدد الكميات المتوفرة بالمخزن وسبب طلب كميات إضافية..."
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                        />
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-emerald-700 font-medium flex items-center gap-1.5 pt-0.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>تم التأكد رسمياً من عدم وجود رصيد يكفي الحاجة بالمخازن</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -811,61 +1037,99 @@ export default function NeedsRequest() {
                     </div>
                   </div>
                 )}
-
-                {/* SPLIT AWARDING (قابلة للتجزئة والترسية لكل بند لمورد مختلف) */}
-                <div className="p-3.5 bg-white border border-indigo-200 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <CheckSquare className="w-4 h-4 text-indigo-600" />
-                      <span className="text-xs font-black text-slate-800">
-                        قابلية التجزئة والترسية المنفصلة للبند (Split Awarding):
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                      {formData.operationType === 'توريدات' 
-                        ? 'في التوريدات: يجوز قانوناً تجزئة الترسية وترسية كل بند على مورد مختلف بأفضل العروض المقبولة فنياً وأقلها سعراً.'
-                        : 'تحديد ما إذا كانت العملية تقبل التجزئة والترسية على أكثر من فائز، أم يتم إسنادها كصفقة واحدة.'}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setFormData(prev => ({ ...prev, allowSplitAwarding: true }))}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                        formData.allowSplitAwarding
-                          ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      تقبل التجزئة والترسية لكل بند ✓
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormData(prev => ({ ...prev, allowSplitAwarding: false }))}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                        !formData.allowSplitAwarding
-                          ? 'bg-slate-800 text-white shadow-sm'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      صفقة واحدة غير مجزأة
-                    </button>
-                  </div>
-                </div>
               </div>
 
-              {/* Specs & Conditions */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">المواصفات الفنية والاشتراطات العامة للعملية</label>
-                <textarea
-                  rows={2}
-                  name="specsAndConditions"
-                  value={formData.specsAndConditions}
-                  onChange={handleInputChange}
-                  placeholder="المواصفات الفنية والمقاييس والشهادات العامة المطلوبة للعملية ككل..."
-                  className="w-full p-3.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
+              {/* Technical Specifications Documentation & Notes */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-indigo-600" />
+                    <span className="text-xs font-black text-slate-800">
+                      وثائق المواصفات الفنية والاشتراطات العامة (Documentation)
+                    </span>
+                  </div>
+                  <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full font-bold">
+                    مستند رسمي معتمد
+                  </span>
+                </div>
+
+                {/* Upload or View Specs Document */}
+                <div className="bg-white p-3.5 rounded-xl border border-dashed border-indigo-200 hover:border-indigo-400 transition-colors">
+                  {formData.specsFileName ? (
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+                          <Paperclip className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                            <span>{formData.specsFileName}</span>
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md font-mono">
+                              مرفق ✓
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {formData.specsFileSize ? `${(formData.specsFileSize / 1024).toFixed(1)} KB • ` : ''}
+                            وثيقة المواصفات الفنية المعتمدة
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {formData.specsFilePath && (
+                          <a
+                            href={formData.specsFilePath.startsWith('http') ? formData.specsFilePath : `http://localhost:5000${formData.specsFilePath}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>معاينة / تحميل</span>
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleRemoveSpecsFile}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors"
+                          title="حذف الملف المرفق"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>إلغاء المرفق</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center py-4 cursor-pointer text-center">
+                      <FileUp className="w-8 h-8 text-indigo-500 mb-2 stroke-[1.5]" />
+                      <span className="text-xs font-bold text-slate-700">
+                        انقر هنا أو اسحب ملف المواصفات الفنية الكاملة (PDF / Word / صور)
+                      </span>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        إرفاق مقايسة الأعمال أو كراسة المواصفات القياسية المفصلة
+                      </p>
+                      <input
+                        type="file"
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                        onChange={handleSpecsFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    ملخص المواصفات الفنية أو الاشتراطات العامة المكتوبة
+                  </label>
+                  <textarea
+                    rows={2}
+                    name="specsAndConditions"
+                    value={formData.specsAndConditions}
+                    onChange={handleInputChange}
+                    placeholder="ملخص الشروط الفنية العامة، الماركات المقبولة، أو معايير الجودة..."
+                    className="w-full p-3 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                  />
+                </div>
               </div>
 
               {/* Sample Requirements Checkbox */}
@@ -1049,18 +1313,47 @@ export default function NeedsRequest() {
                   />
                 </div>
 
+                {/* Initial Guarantee Amount (خانة رقم نقدي بالجنيه) */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">نسبة التأمين الابتدائي (%)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="10"
-                    step="0.5"
-                    name="initialGuaranteePercent"
-                    value={formData.initialGuaranteePercent}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-700">قيمة التأمين الابتدائي (ج.م) *</label>
+                    {parseFloat(formData.estimatedValue) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const est = parseFloat(formData.estimatedValue) || 0;
+                          const amt = Math.round(est * 0.015);
+                          handleGuaranteeAmountChange(amt);
+                        }}
+                        className="text-[10px] text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded font-bold transition-colors"
+                        title="احتساب نسبة 1.5% تلقائياً من القيمة التقديرية طبقاً للمادة 35 من قانون 182"
+                      >
+                        احتساب 1.5% ⚡
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      name="initialGuaranteeAmount"
+                      value={formData.initialGuaranteeAmount ?? ''}
+                      onChange={(e) => handleGuaranteeAmountChange(e.target.value)}
+                      placeholder="مثال: 15000"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                    <span className="absolute left-3.5 top-2.5 text-xs text-slate-400 font-bold">ج.م</span>
+                  </div>
+                  {parseFloat(formData.estimatedValue) > 0 && formData.initialGuaranteeAmount ? (
+                    <p className="text-[10px] text-slate-500 mt-1 font-mono">
+                      يمثل نسبة: <span className="font-bold text-emerald-700">{formData.initialGuaranteePercent || ((formData.initialGuaranteeAmount / formData.estimatedValue) * 100).toFixed(1)}%</span> (الحد الأقصى القانوني 2%)
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      مبلغ نقدي محدد بالجنيه (بحد أقصى 2% من القيمة التقديرية)
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -1076,17 +1369,32 @@ export default function NeedsRequest() {
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">ثمن كراسة الشروط التقديري (ج.م)</label>
+                {/* Booklet Price with Auto Calculation Helper */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-700">ثمن كراسة الشروط (ج.م) *</label>
+                    <button
+                      type="button"
+                      onClick={handleCalculateStandardBookletPrice}
+                      className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-100 hover:bg-emerald-200 px-2 py-0.5 rounded-md transition-colors flex items-center gap-1"
+                      title="حساب سعر الكراسة آلياً طبقاً لفئات المادة 23 من قانون 182"
+                    >
+                      <Calculator className="w-3 h-3" />
+                      <span>حساب تلقائي ⚡</span>
+                    </button>
+                  </div>
                   <input
                     type="number"
                     min="0"
                     name="bookletPrice"
                     value={formData.bookletPrice}
                     onChange={handleInputChange}
-                    placeholder="مثال: 500"
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
+                    placeholder="مثال: 500 أو 1000"
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
                   />
+                  <p className="text-[10px] text-slate-400">
+                    يحدد ثمن الكراسة بما يغطي التكلفة الفعلية لطباعتها وإعدادها
+                  </p>
                 </div>
 
                 {formData.operationType === 'تعاقدات' && (
@@ -1309,18 +1617,6 @@ export default function NeedsRequest() {
 
                             {/* Item Actions */}
                             <div className="flex items-center justify-between pt-1">
-                              {formData.allowSplitAwarding && (
-                                <label className="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-slate-700">
-                                  <input
-                                    type="checkbox"
-                                    checked={item.allowSplit !== false}
-                                    onChange={(e) => handleItemChange(idx, 'allowSplit', e.target.checked)}
-                                    className="w-4 h-4 text-emerald-600 rounded"
-                                  />
-                                  <span>يقبل هذا البند الترسية المستقلة على مورد منفصل (Split Item)</span>
-                                </label>
-                              )}
-
                               {operationItems.length > 1 && (
                                 <button
                                   type="button"
@@ -1374,75 +1670,124 @@ export default function NeedsRequest() {
 
             <div className="p-6 space-y-6">
 
-              {/* Sub-part A: Paper Financial Approval */}
+              {/* Sub-part A: Financial Position (تسجيل موقف المالية) */}
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2">
                     <Stamp className="w-4 h-4 text-purple-600" />
-                    <span className="text-xs font-black text-slate-800">أولاً: تسجيل موقف الموافقة المالية الورقية</span>
+                    <span className="text-xs font-black text-slate-800">أولاً: تسجيل موقف الإدارة المالية (تأشيرة الموازنة) *</span>
                   </div>
-                  <span className="text-[11px] text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                    تتم الموافقة المالية ور قياً ويسجل المرجع هنا
+                  <span className="text-[11px] text-purple-800 bg-purple-100 font-bold px-2.5 py-1 rounded-lg">
+                    {formData.financialStatus === 'APPROVED' ? 'الحالة: معتمد مالياً ✓' : formData.financialStatus === 'REJECTED' ? 'الحالة: غير معتمد ✕' : 'الحالة: قيد المراجعة ⏳'}
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 3 Status Cards for Financial Position */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Option 1: Approved */}
                   <button
                     type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, financialApprovalObtained: true }))}
-                    className={`p-3.5 rounded-2xl border-2 text-xs font-bold transition-all flex items-center justify-between ${
-                      formData.financialApprovalObtained
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20'
+                    onClick={() => handleFinancialStatusSelect('APPROVED')}
+                    className={`p-3.5 rounded-2xl border-2 text-right transition-all flex flex-col justify-between gap-2 ${
+                      formData.financialStatus === 'APPROVED'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20 ring-2 ring-emerald-500/30'
                         : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-300'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center ${formData.financialApprovalObtained ? 'bg-white text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-                        <Check className="w-3.5 h-3.5 font-black" />
+                    <div className="flex items-center justify-between w-full">
+                      <span className="font-black text-xs">معتمد مالياً ✓</span>
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center ${formData.financialStatus === 'APPROVED' ? 'bg-white text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                        <Check className="w-3 h-3 font-black" />
                       </div>
-                      <span>نعم، تم أخذ الموافقة والتأشيرة المالية ور قياً</span>
                     </div>
+                    <p className={`text-[11px] leading-relaxed ${formData.financialStatus === 'APPROVED' ? 'text-emerald-100' : 'text-slate-500'}`}>
+                      تمت الموافقة وتأشيرة الموازنة وحجز الاعتماد المالي للعملية.
+                    </p>
                   </button>
 
+                  {/* Option 2: Pending */}
                   <button
                     type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, financialApprovalObtained: false }))}
-                    className={`p-3.5 rounded-2xl border-2 text-xs font-bold transition-all flex items-center justify-between ${
-                      !formData.financialApprovalObtained
-                        ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-600/20'
+                    onClick={() => handleFinancialStatusSelect('PENDING')}
+                    className={`p-3.5 rounded-2xl border-2 text-right transition-all flex flex-col justify-between gap-2 ${
+                      formData.financialStatus === 'PENDING'
+                        ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-600/20 ring-2 ring-amber-500/30'
                         : 'bg-white text-slate-700 border-slate-200 hover:border-amber-300'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center ${!formData.financialApprovalObtained ? 'bg-white text-amber-600' : 'bg-slate-100 text-slate-400'}`}>
-                        <Clock className="w-3.5 h-3.5" />
+                    <div className="flex items-center justify-between w-full">
+                      <span className="font-black text-xs">قيد المراجعة المالية</span>
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center ${formData.financialStatus === 'PENDING' ? 'bg-white text-amber-600' : 'bg-slate-100 text-slate-400'}`}>
+                        <Clock className="w-3 h-3" />
                       </div>
-                      <span>لم يتم أخذ الموافقة المالية بعد (أو جاري المراجعة)</span>
                     </div>
+                    <p className={`text-[11px] leading-relaxed ${formData.financialStatus === 'PENDING' ? 'text-amber-100' : 'text-slate-500'}`}>
+                      الطلب معلق قيد التدقيق المالي لحين التحقق من توفر الاعتماد.
+                    </p>
+                  </button>
+
+                  {/* Option 3: Rejected */}
+                  <button
+                    type="button"
+                    onClick={() => handleFinancialStatusSelect('REJECTED')}
+                    className={`p-3.5 rounded-2xl border-2 text-right transition-all flex flex-col justify-between gap-2 ${
+                      formData.financialStatus === 'REJECTED'
+                        ? 'bg-rose-600 text-white border-rose-600 shadow-md shadow-rose-600/20 ring-2 ring-rose-500/30'
+                        : 'bg-white text-slate-700 border-slate-200 hover:border-rose-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="font-black text-xs">غير معتمد / اعتذار</span>
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center ${formData.financialStatus === 'REJECTED' ? 'bg-white text-rose-600' : 'bg-slate-100 text-slate-400'}`}>
+                        <X className="w-3 h-3 font-black" />
+                      </div>
+                    </div>
+                    <p className={`text-[11px] leading-relaxed ${formData.financialStatus === 'REJECTED' ? 'text-rose-100' : 'text-slate-500'}`}>
+                      اعتذار لعدم توفر اعتماد مالي بالموازنة المخصصة لهذا العام.
+                    </p>
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                {/* Financial Position Details Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 bg-white p-3.5 rounded-xl border border-slate-200">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">تاريخ التأشيرة أو الموافقة المالية</label>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      رقم التأشيرة / مذكرة حجز الموازنة
+                    </label>
+                    <input
+                      type="text"
+                      name="budgetHoldReference"
+                      value={formData.budgetHoldReference}
+                      onChange={handleInputChange}
+                      placeholder="مثال: م.ح/2025/114 أو تأشيرة 45"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      تاريخ التأشيرة أو الموافقة المالية
+                    </label>
                     <input
                       type="date"
                       name="financialApprovalDate"
                       value={formData.financialApprovalDate}
                       onChange={handleInputChange}
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 outline-none bg-white font-mono"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 outline-none font-mono"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">رقم التأشيرة / مرجع الموافقة المالية الورقية</label>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      المراقب أو المسئول المالي القائم بالتأشيرة
+                    </label>
                     <input
                       type="text"
-                      name="financialApprovalNotes"
-                      value={formData.financialApprovalNotes}
+                      name="financialOfficerName"
+                      value={formData.financialOfficerName || ''}
                       onChange={handleInputChange}
-                      placeholder="مثال: تأشيرة الشئون المالية رقم 45 بتاريخ..."
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 outline-none bg-white"
+                      placeholder="اسم المراقب أو المدير المالي..."
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 outline-none"
                     />
                   </div>
                 </div>
@@ -1722,7 +2067,15 @@ export default function NeedsRequest() {
                       <tr key={req.RequestId} className="hover:bg-slate-50/70 transition-colors">
                         <td className="p-3 font-mono font-bold text-slate-400">#{req.RequestId}</td>
                         <td className="p-3">
-                          <div className="font-bold text-slate-800 text-sm">{req.OperationName}</div>
+                          <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                            <span>{req.OperationName}</span>
+                            {req.SpecsFileName && (
+                              <span className="inline-flex items-center gap-0.5 text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded font-medium" title={req.SpecsFileName}>
+                                <Paperclip className="w-2.5 h-2.5" />
+                                <span>وثيقة</span>
+                              </span>
+                            )}
+                          </div>
                           {req.FinancialOperationNumber && (
                             <div className="text-[11px] font-mono text-indigo-600 font-bold">
                               رقم: {req.FinancialOperationNumber}
@@ -1737,17 +2090,10 @@ export default function NeedsRequest() {
                         </td>
                         <td className="p-3">
                           {isPoints ? (
-                            <div className="space-y-0.5">
-                              <span className="inline-flex items-center gap-1 bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded font-bold text-[10px]">
-                                <Award className="w-3 h-3 text-purple-600" />
-                                <span>نظام نقاط ({req.MinPassingScore || 70}%)</span>
-                              </span>
-                              {req.AllowSplitAwarding ? (
-                                <div className="text-[9px] text-emerald-700 font-semibold">تجزئة وترسية منفصلة للبند ✓</div>
-                              ) : (
-                                <div className="text-[9px] text-slate-400">صفقة واحدة</div>
-                              )}
-                            </div>
+                            <span className="inline-flex items-center gap-1 bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded font-bold text-[10px]">
+                              <Award className="w-3 h-3 text-purple-600" />
+                              <span>نظام نقاط ({req.MinPassingScore || 70}%)</span>
+                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded font-bold text-[10px]">
                               <span>مطابق / غير مطابق</span>

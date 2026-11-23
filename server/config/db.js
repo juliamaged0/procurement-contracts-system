@@ -95,6 +95,7 @@ async function ensureSchemaUpToDate() {
                 AuthorityRejectionReason NVARCHAR(500) NULL,
                 WorkflowStatus NVARCHAR(100) DEFAULT N'طلب جديد',
                 InitialGuaranteePercent DECIMAL(5,2) DEFAULT 2,
+                InitialGuaranteeAmount DECIMAL(18,2) DEFAULT 0,
                 OperationItems NVARCHAR(MAX) NULL,
                 FinancialNotes NVARCHAR(MAX) NULL,
                 FinancialReviewedAt DATETIME NULL,
@@ -104,6 +105,8 @@ async function ensureSchemaUpToDate() {
                 FinancialApprovalObtained BIT DEFAULT 0,
                 FinancialApprovalDate DATETIME NULL,
                 FinancialApprovalNotes NVARCHAR(MAX) NULL,
+                SpecsFileName NVARCHAR(300) NULL,
+                SpecsFilePath NVARCHAR(500) NULL,
                 BookletFileName NVARCHAR(300) NULL,
                 BookletFilePath NVARCHAR(500) NULL,
                 TechnicalEvaluationMethod NVARCHAR(100) DEFAULT N'مطابق أو غير مطابق',
@@ -137,6 +140,14 @@ async function ensureSchemaUpToDate() {
                 BookletUploadedAt DATETIME NULL,
                 InvitedVendorsCount INT DEFAULT 0,
                 InvitedVendorsJson NVARCHAR(MAX) NULL;
+        END
+      `);
+
+      // Ensure InitialGuaranteeAmount exists in NeedsRequests
+      await pool.request().query(`
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('NeedsRequests') AND name = 'InitialGuaranteeAmount')
+        BEGIN
+            ALTER TABLE NeedsRequests ADD InitialGuaranteeAmount DECIMAL(18,2) DEFAULT 0;
         END
       `);
 

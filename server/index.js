@@ -1676,7 +1676,7 @@ app.post('/api/needs-requests/submit', authenticateToken, async (req, res) => {
       
       // Section 2: Financial Review & Items
       tenderMethodSelected, estimatedValue, preliminaryReservation, reservationTypeNew,
-      budgetHoldReference, initialGuaranteePercent, submittalType, bookletPrice,
+      budgetHoldReference, initialGuaranteePercent, initialGuaranteeAmount, submittalType, bookletPrice,
       operationTerms, operationItems, constructionDivision, constructionCategory, financialNotes,
       
       // Section 3: Paper Approvals & Authority
@@ -1746,30 +1746,54 @@ app.post('/api/needs-requests/submit', authenticateToken, async (req, res) => {
 
     const itemsJson = operationItems ? (typeof operationItems === 'string' ? operationItems : JSON.stringify(operationItems)) : '[]';
 
+    let finalSpecsFileName = req.body.specsFileName || null;
+    let finalSpecsFilePath = req.body.specsFilePath || null;
+    if (req.body.specsFileData) {
+      try {
+        const specsUploadsDir = path.join(__dirname, 'uploads', 'specs');
+        if (!fs.existsSync(specsUploadsDir)) fs.mkdirSync(specsUploadsDir, { recursive: true });
+        let base64Content = req.body.specsFileData;
+        if (base64Content.includes(';base64,')) base64Content = base64Content.split(';base64,')[1];
+        const ext = path.extname(req.body.specsFileName || 'document.pdf') || '.pdf';
+        const uniqueName = `specs-req-${Date.now()}${ext}`;
+        const targetPath = path.join(specsUploadsDir, uniqueName);
+        fs.writeFileSync(targetPath, Buffer.from(base64Content, 'base64'));
+        finalSpecsFileName = req.body.specsFileName || uniqueName;
+        finalSpecsFilePath = `/uploads/specs/${uniqueName}`;
+      } catch (fileErr) {
+        console.error('Specs file save error:', fileErr.message);
+      }
+    }
+
+    const finalGuaranteeAmt = parseFloat(initialGuaranteeAmount) || (estVal > 0 ? Math.round((estVal * (parseFloat(initialGuaranteePercent) || 2)) / 100) : 0);
+    const finalGuaranteePct = estVal > 0 && finalGuaranteeAmt > 0 ? parseFloat(((finalGuaranteeAmt / estVal) * 100).toFixed(2)) : (parseFloat(initialGuaranteePercent) || 2);
+
     const result = await query(`
       INSERT INTO NeedsRequests (
         OperationName, OperationType, RequestingDepartment, ExecutionDuration,
         SpecsAndConditions, RequiresSample, SampleDetails, WarehouseBalance,
         FiscalYear, EstimatedValue, TenderMethodSelected, PreliminaryReservation, InitialReservation,
-        ReservationTypeNew, BudgetHoldReference, InitialGuaranteePercent, SubmittalType, BookletPrice,
+        ReservationTypeNew, BudgetHoldReference, InitialGuaranteePercent, InitialGuaranteeAmount, SubmittalType, BookletPrice,
         OperationTerms, OperationItems, ConstructionDivision, ConstructionCategory, FinancialNotes,
         FinancialOperationNumber, FinancialOperationSymbol, ApprovalAuthority,
         FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes,
         AuthorityApprovalStatus, AuthorityApprovalDate, AuthorityRejectionReason,
         AuthorityReviewedBy, AuthorityReviewedAt, FinancialReviewedAt, FinancialReviewedBy,
         TechnicalEvaluationMethod, MinPassingScore, AllowSplitAwarding, TechnicalCriteriaNotes,
+        SpecsFileName, SpecsFilePath,
         WorkflowStatus, Status, IsDeleted
       ) VALUES (
         @operationName, @operationType, @requestingDepartment, @executionDuration,
         @specsAndConditions, @requiresSample, @sampleDetails, @warehouseBalance,
         @fiscalYear, @estimatedValue, @tenderMethodSelected, @preliminaryReservation, @initialReservation,
-        @reservationTypeNew, @budgetHoldReference, @initialGuaranteePercent, @submittalType, @bookletPrice,
+        @reservationTypeNew, @budgetHoldReference, @initialGuaranteePercent, @initialGuaranteeAmount, @submittalType, @bookletPrice,
         @operationTerms, @operationItems, @constructionDivision, @constructionCategory, @financialNotes,
         @operationNumber, @symbol, @authority,
         @financialApprovalObtained, @financialApprovalDate, @financialApprovalNotes,
         @authorityApprovalStatus, @authorityApprovalDate, @authorityRejectionReason,
         @reviewedBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, @reviewedBy,
         @technicalEvaluationMethod, @minPassingScore, @allowSplitAwarding, @technicalCriteriaNotes,
+        @finalSpecsFileName, @finalSpecsFilePath,
         @workflowStatus, @status, 0
       )
     `, {
@@ -1786,7 +1810,8 @@ app.post('/api/needs-requests/submit', authenticateToken, async (req, res) => {
       initialReservation: parseFloat(preliminaryReservation) || estVal,
       reservationTypeNew: reservationTypeNew || 'جاري',
       budgetHoldReference: budgetHoldReference || null,
-      initialGuaranteePercent: parseFloat(initialGuaranteePercent) || 2,
+      initialGuaranteePercent: finalGuaranteePct,
+      initialGuaranteeAmount: finalGuaranteeAmt,
       submittalType: submittalType || 'مظروفيين',
       bookletPrice: parseFloat(bookletPrice) || 0,
       operationTerms: operationTerms || '',
@@ -1808,6 +1833,8 @@ app.post('/api/needs-requests/submit', authenticateToken, async (req, res) => {
       minPassingScore: parseFloat(minPassingScore) || 70,
       allowSplitAwarding: allowSplitAwarding ? 1 : (operationType === 'توريدات' ? 1 : 0),
       technicalCriteriaNotes: technicalCriteriaNotes || '',
+      finalSpecsFileName,
+      finalSpecsFilePath,
       workflowStatus,
       status
     });
@@ -1835,7 +1862,7 @@ const handleUpdateNeedsRequest = async (req, res) => {
       specsAndConditions, requiresSample, sampleDetails, fiscalYear, warehouseBalance,
       technicalEvaluationMethod, minPassingScore, allowSplitAwarding, technicalCriteriaNotes,
       tenderMethodSelected, estimatedValue, preliminaryReservation, reservationTypeNew,
-      budgetHoldReference, initialGuaranteePercent, submittalType, bookletPrice,
+      budgetHoldReference, initialGuaranteePercent, initialGuaranteeAmount, submittalType, bookletPrice,
       operationTerms, operationItems, constructionDivision, constructionCategory, financialNotes,
       financialApprovalObtained, financialApprovalDate, financialApprovalNotes,
       approvalAuthority, authorityApprovalStatus, authorityApprovalDate,
@@ -1900,6 +1927,25 @@ const handleUpdateNeedsRequest = async (req, res) => {
 
     const itemsJson = operationItems ? (typeof operationItems === 'string' ? operationItems : JSON.stringify(operationItems)) : (old.OperationItems || '[]');
 
+    let finalSpecsFileName = req.body.specsFileName !== undefined ? req.body.specsFileName : old.SpecsFileName;
+    let finalSpecsFilePath = req.body.specsFilePath !== undefined ? req.body.specsFilePath : old.SpecsFilePath;
+    if (req.body.specsFileData) {
+      try {
+        const specsUploadsDir = path.join(__dirname, 'uploads', 'specs');
+        if (!fs.existsSync(specsUploadsDir)) fs.mkdirSync(specsUploadsDir, { recursive: true });
+        let base64Content = req.body.specsFileData;
+        if (base64Content.includes(';base64,')) base64Content = base64Content.split(';base64,')[1];
+        const ext = path.extname(req.body.specsFileName || 'document.pdf') || '.pdf';
+        const uniqueName = `specs-req-${id}-${Date.now()}${ext}`;
+        const targetPath = path.join(specsUploadsDir, uniqueName);
+        fs.writeFileSync(targetPath, Buffer.from(base64Content, 'base64'));
+        finalSpecsFileName = req.body.specsFileName || uniqueName;
+        finalSpecsFilePath = `/uploads/specs/${uniqueName}`;
+      } catch (fileErr) {
+        console.error('Specs file save error:', fileErr.message);
+      }
+    }
+
     await query(`
       UPDATE NeedsRequests SET
         OperationName = @operationName,
@@ -1918,6 +1964,7 @@ const handleUpdateNeedsRequest = async (req, res) => {
         ReservationTypeNew = @reservationTypeNew,
         BudgetHoldReference = @budgetHoldReference,
         InitialGuaranteePercent = @initialGuaranteePercent,
+        InitialGuaranteeAmount = @initialGuaranteeAmount,
         SubmittalType = @submittalType,
         BookletPrice = @bookletPrice,
         OperationTerms = @operationTerms,
@@ -1940,6 +1987,8 @@ const handleUpdateNeedsRequest = async (req, res) => {
         MinPassingScore = @minPassingScore,
         AllowSplitAwarding = @allowSplitAwarding,
         TechnicalCriteriaNotes = @technicalCriteriaNotes,
+        SpecsFileName = @finalSpecsFileName,
+        SpecsFilePath = @finalSpecsFilePath,
         WorkflowStatus = @workflowStatus,
         Status = @status
       WHERE RequestId = @id
@@ -1958,7 +2007,10 @@ const handleUpdateNeedsRequest = async (req, res) => {
       preliminaryReservation: safeFloat(preliminaryReservation, old.PreliminaryReservation || estVal || 0),
       reservationTypeNew: reservationTypeNew || old.ReservationTypeNew || 'جاري',
       budgetHoldReference: budgetHoldReference !== undefined ? budgetHoldReference : old.BudgetHoldReference,
-      initialGuaranteePercent: safeFloat(initialGuaranteePercent, old.InitialGuaranteePercent || 2),
+      initialGuaranteePercent: estVal > 0 && safeFloat(initialGuaranteeAmount, old.InitialGuaranteeAmount || 0) > 0
+        ? parseFloat(((safeFloat(initialGuaranteeAmount, old.InitialGuaranteeAmount || 0) / estVal) * 100).toFixed(2))
+        : safeFloat(initialGuaranteePercent, old.InitialGuaranteePercent || 2),
+      initialGuaranteeAmount: safeFloat(initialGuaranteeAmount, old.InitialGuaranteeAmount || (estVal > 0 ? Math.round((estVal * safeFloat(initialGuaranteePercent, old.InitialGuaranteePercent || 2)) / 100) : 0)),
       submittalType: submittalType || old.SubmittalType || 'مظروفيين',
       bookletPrice: safeFloat(bookletPrice, old.BookletPrice || 0),
       operationTerms: operationTerms !== undefined ? operationTerms : old.OperationTerms,
@@ -1980,6 +2032,8 @@ const handleUpdateNeedsRequest = async (req, res) => {
       minPassingScore: safeFloat(minPassingScore, old.MinPassingScore || 70),
       allowSplitAwarding: allowSplitAwarding !== undefined ? (allowSplitAwarding ? 1 : 0) : (old.AllowSplitAwarding !== undefined ? old.AllowSplitAwarding : (opType === 'توريدات' ? 1 : 0)),
       technicalCriteriaNotes: technicalCriteriaNotes !== undefined ? technicalCriteriaNotes : (old.TechnicalCriteriaNotes || ''),
+      finalSpecsFileName,
+      finalSpecsFilePath,
       workflowStatus,
       status,
       id

@@ -215,6 +215,7 @@ CREATE TABLE NeedsRequests (
     AuthorityRejectionReason NVARCHAR(500),
     WorkflowStatus NVARCHAR(100) DEFAULT N'طلب جديد',
     InitialGuaranteePercent DECIMAL(5,2) DEFAULT 2,
+    InitialGuaranteeAmount DECIMAL(18,2) DEFAULT 0,
     OperationItems NVARCHAR(MAX),
     
     -- Financial Review Notes
@@ -229,7 +230,9 @@ CREATE TABLE NeedsRequests (
     FinancialApprovalDate DATETIME,
     FinancialApprovalNotes NVARCHAR(MAX),
     
-    -- Booklet Document
+    -- Specs & Booklet Documents
+    SpecsFileName NVARCHAR(300),
+    SpecsFilePath NVARCHAR(500),
     BookletFileName NVARCHAR(300),
     BookletFilePath NVARCHAR(500),
     
