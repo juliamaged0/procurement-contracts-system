@@ -4,6 +4,11 @@
 -- متوافقة 100% مع جميع حقول وجداول النظام، قانون 182 لسنة 2018، والقيود الصارمة (Validations)
 -- ============================================================================
 
+SET ANSI_NULLS ON;
+GO
+SET QUOTED_IDENTIFIER ON;
+GO
+
 IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'ProcurementDB')
 BEGIN
     CREATE DATABASE ProcurementDB;
@@ -11,6 +16,11 @@ END
 GO
 
 USE ProcurementDB;
+GO
+
+SET ANSI_NULLS ON;
+GO
+SET QUOTED_IDENTIFIER ON;
 GO
 
 -- ============================================================================
@@ -161,13 +171,13 @@ CREATE TABLE NeedsRequests (
     RequestId INT IDENTITY(1,1) PRIMARY KEY,
     OperationName NVARCHAR(500) NOT NULL,
     OperationType NVARCHAR(50) NOT NULL DEFAULT N'توريدات' CHECK (OperationType IN (N'توريدات', N'مقاولات', N'خدمات واستشارات', N'تعاقدات', N'مزادات')),
-    EstimatedValue DECIMAL(18,2) NOT NULL CHECK (EstimatedValue >= 0),
+    EstimatedValue DECIMAL(18,2) DEFAULT 0,
     RequestingDepartment NVARCHAR(250) NOT NULL,
     BudgetHoldReference NVARCHAR(100),
     ExecutionDuration NVARCHAR(100),
     FiscalYear NVARCHAR(20) NOT NULL,
     ReservationType NVARCHAR(100) DEFAULT N'موازنة الشركة',
-    InitialReservation DECIMAL(18,2) DEFAULT 0 CHECK (InitialReservation >= 0),
+    InitialReservation DECIMAL(18,2) DEFAULT 0,
     ApprovalAuthorityDate DATE,
     SubmittalType NVARCHAR(50) DEFAULT N'مظروفيين' CHECK (SubmittalType IN (N'مظروف واحد', N'مظروفيين')),
     WarehouseBalance NVARCHAR(500) DEFAULT N'لا يوجد رصيد بالمخازن',
@@ -193,7 +203,7 @@ CREATE TABLE NeedsRequests (
     TenderMethodSelected NVARCHAR(100),
     PreliminaryReservation DECIMAL(18,2) DEFAULT 0,
     ReservationTypeNew NVARCHAR(100),
-    BookletPrice DECIMAL(18,2) DEFAULT 0 CHECK (BookletPrice >= 0),
+    BookletPrice DECIMAL(18,2) DEFAULT 0,
     OperationTerms NVARCHAR(MAX),
     ConstructionDivision NVARCHAR(150),
     ConstructionCategory NVARCHAR(100),
@@ -204,7 +214,7 @@ CREATE TABLE NeedsRequests (
     AuthorityApprovalDate DATETIME,
     AuthorityRejectionReason NVARCHAR(500),
     WorkflowStatus NVARCHAR(100) DEFAULT N'طلب جديد',
-    InitialGuaranteePercent DECIMAL(5,2) DEFAULT 2 CHECK (InitialGuaranteePercent >= 0 AND InitialGuaranteePercent <= 100),
+    InitialGuaranteePercent DECIMAL(5,2) DEFAULT 2,
     OperationItems NVARCHAR(MAX),
     
     -- Financial Review Notes
@@ -224,8 +234,8 @@ CREATE TABLE NeedsRequests (
     BookletFilePath NVARCHAR(500),
     
     -- Technical Evaluation Rules
-    TechnicalEvaluationMethod NVARCHAR(100) DEFAULT N'مطابق أو غير مطابق' CHECK (TechnicalEvaluationMethod IN (N'مطابق أو غير مطابق', N'نظام نقاط')),
-    MinPassingScore DECIMAL(5,2) DEFAULT 70 CHECK (MinPassingScore BETWEEN 0 AND 100),
+    TechnicalEvaluationMethod NVARCHAR(100) DEFAULT N'مطابق أو غير مطابق',
+    MinPassingScore DECIMAL(5,2) DEFAULT 70,
     AllowSplitAwarding BIT DEFAULT 0,
     TechnicalCriteriaNotes NVARCHAR(MAX)
 );
@@ -264,19 +274,19 @@ CREATE TABLE Tenders (
     RequestingDepartment NVARCHAR(250),
     BudgetHoldReference NVARCHAR(100),
     FiscalYear NVARCHAR(20) NOT NULL,
-    BaseBookletPrice DECIMAL(18,2) NOT NULL DEFAULT 0 CHECK (BaseBookletPrice >= 0),
-    CalculatedBookletPrice DECIMAL(18,2) NOT NULL DEFAULT 0 CHECK (CalculatedBookletPrice >= 0),
-    InitialGuaranteeAmount DECIMAL(18,2) NOT NULL DEFAULT 0 CHECK (InitialGuaranteeAmount >= 0),
+    BaseBookletPrice DECIMAL(18,2) NOT NULL DEFAULT 0,
+    CalculatedBookletPrice DECIMAL(18,2) NOT NULL DEFAULT 0,
+    InitialGuaranteeAmount DECIMAL(18,2) NOT NULL DEFAULT 0,
     EnvelopeOpeningDate DATETIME NOT NULL,
     AdNewspaper1 NVARCHAR(150),
     AdNewspaper2 NVARCHAR(150),
     AdPublishDate DATE,
     AdDetails NVARCHAR(MAX),
-    EvaluationMethod NVARCHAR(50) DEFAULT N'تقرير فني' CHECK (EvaluationMethod IN (N'تقرير فني', N'نظام النقاط', N'مطابق أو غير مطابق')),
-    PassingScoreDecimal DECIMAL(5,2) CHECK (PassingScoreDecimal BETWEEN 0 AND 100),
+    EvaluationMethod NVARCHAR(50) DEFAULT N'تقرير فني',
+    PassingScoreDecimal DECIMAL(5,2),
     RequiresSample BIT DEFAULT 0,
     SampleDetails NVARCHAR(500),
-    Status NVARCHAR(50) DEFAULT N'نشط' CHECK (Status IN (N'نشط', N'مفضوض المظاريف', N'مبتوت', N'مسند', N'مكتمل التوريد والتسليم', N'ملغى', N'مؤرشف')),
+    Status NVARCHAR(50) DEFAULT N'نشط',
     IsDeleted BIT DEFAULT 0,
     CreatedAt DATETIME DEFAULT GETDATE(),
     
@@ -299,13 +309,13 @@ CREATE TABLE Tenders (
     WarehouseBalance NVARCHAR(500),
     SpecsAndConditions NVARCHAR(MAX),
     ReservationType NVARCHAR(100) DEFAULT N'موازنة الشركة',
-    EstimatedValue DECIMAL(18,2) DEFAULT 0 CHECK (EstimatedValue >= 0),
+    EstimatedValue DECIMAL(18,2) DEFAULT 0,
     ConstructionDivision NVARCHAR(150),
     ConstructionCategory NVARCHAR(100),
     FinancialApprovalObtained BIT DEFAULT 0,
     FinancialApprovalDate DATETIME,
     FinancialApprovalNotes NVARCHAR(MAX),
-    InvitedVendorsCount INT DEFAULT 0 CHECK (InvitedVendorsCount >= 0),
+    InvitedVendorsCount INT DEFAULT 0,
     InvitedVendorsJson NVARCHAR(MAX)
 );
 CREATE NONCLUSTERED INDEX IX_Tenders_Number ON Tenders(TenderNumber);
@@ -321,13 +331,13 @@ CREATE TABLE TenderItems (
     ItemNumber INT NOT NULL,
     ItemDescription NVARCHAR(MAX) NOT NULL,
     Unit NVARCHAR(50) NOT NULL,
-    EstimatedQuantity DECIMAL(18,3) NOT NULL CHECK (EstimatedQuantity >= 0),
-    EstimatedUnitPrice DECIMAL(18,2) NOT NULL CHECK (EstimatedUnitPrice >= 0),
-    EstimatedTotalPrice AS (EstimatedQuantity * EstimatedUnitPrice) PERSISTED,
+    EstimatedQuantity DECIMAL(18,3) NOT NULL DEFAULT 0,
+    EstimatedUnitPrice DECIMAL(18,2) NOT NULL DEFAULT 0,
+    EstimatedTotalPrice AS (EstimatedQuantity * EstimatedUnitPrice),
     Notes NVARCHAR(500),
     ItemSpecs NVARCHAR(MAX),
-    ItemMaxScore DECIMAL(5,2) DEFAULT 100 CHECK (ItemMaxScore >= 0),
-    ItemMinPassingScore DECIMAL(5,2) DEFAULT 70 CHECK (ItemMinPassingScore >= 0),
+    ItemMaxScore DECIMAL(5,2) DEFAULT 100,
+    ItemMinPassingScore DECIMAL(5,2) DEFAULT 70,
     ItemCriteria NVARCHAR(MAX),
     AllowSplit BIT DEFAULT 1
 );
@@ -365,9 +375,9 @@ CREATE TABLE BidSubmissions (
     VendorId INT NOT NULL FOREIGN KEY REFERENCES Vendors(VendorId),
     BidFractionSerial NVARCHAR(20) NOT NULL,
     SubmissionDate DATETIME DEFAULT GETDATE(),
-    InitialInsuranceAmount DECIMAL(18,2) DEFAULT 0 CHECK (InitialInsuranceAmount >= 0),
-    GuaranteePaymentMethod NVARCHAR(50) CHECK (GuaranteePaymentMethod IN (N'نقداً', N'خطاب ضمان', N'شيك', N'خصم من مستحقاته')),
-    InitialInsuranceStatus NVARCHAR(50) DEFAULT N'ساري' CHECK (InitialInsuranceStatus IN (N'ساري', N'محول للنهائي', N'مردود للمناقص', N'مصادر')),
+    InitialInsuranceAmount DECIMAL(18,2) DEFAULT 0,
+    GuaranteePaymentMethod NVARCHAR(50),
+    InitialInsuranceStatus NVARCHAR(50) DEFAULT N'ساري',
     ReceiptNumber NVARCHAR(100),
     ReceiptDate DATE,
     CheckNumber NVARCHAR(100),
@@ -399,10 +409,10 @@ CREATE TABLE BidSubmissions (
     SampleNumber NVARCHAR(50),
     SampleDeliveryDate DATE,
     SampleNotes NVARCHAR(500),
-    TechnicalStatus NVARCHAR(50) DEFAULT N'تحت التقييم' CHECK (TechnicalStatus IN (N'تحت التقييم', N'مقبول', N'مرفوض')),
+    TechnicalStatus NVARCHAR(50) DEFAULT N'تحت التقييم',
     TechnicalScore DECIMAL(5,2),
     RejectionReason NVARCHAR(500),
-    FinancialTotalAmount DECIMAL(18,2) DEFAULT 0 CHECK (FinancialTotalAmount >= 0),
+    FinancialTotalAmount DECIMAL(18,2) DEFAULT 0,
     FinancialRank INT,
     FinalRank INT,
     IsDeleted BIT DEFAULT 0
@@ -420,9 +430,9 @@ CREATE TABLE BidItems (
     TenderItemId INT FOREIGN KEY REFERENCES TenderItems(ItemId),
     ItemName NVARCHAR(500) NOT NULL,
     UnitType NVARCHAR(50) NOT NULL,
-    Quantity DECIMAL(18,3) NOT NULL CHECK (Quantity >= 0),
-    UnitPrice DECIMAL(18,2) NOT NULL DEFAULT 0 CHECK (UnitPrice >= 0),
-    TotalPrice DECIMAL(18,2) NOT NULL DEFAULT 0 CHECK (TotalPrice >= 0),
+    Quantity DECIMAL(18,3) NOT NULL DEFAULT 0,
+    UnitPrice DECIMAL(18,2) NOT NULL DEFAULT 0,
+    TotalPrice DECIMAL(18,2) NOT NULL DEFAULT 0,
     QuotedUnitPrice DECIMAL(18,2) DEFAULT 0,
     TotalItemPrice DECIMAL(18,2) DEFAULT 0,
     TechnicalEvaluation NVARCHAR(100) DEFAULT N'مقبول أساسي',
@@ -440,14 +450,14 @@ CREATE TABLE Awardings (
     WinnerSubmissionId INT NOT NULL FOREIGN KEY REFERENCES BidSubmissions(SubmissionId),
     VendorId INT NOT NULL FOREIGN KEY REFERENCES Vendors(VendorId),
     AwardDate DATE NOT NULL,
-    AwardedAmount DECIMAL(18,2) NOT NULL CHECK (AwardedAmount >= 0),
+    AwardedAmount DECIMAL(18,2) NOT NULL DEFAULT 0,
     AwardedAmountTafqeet NVARCHAR(500),
     AuthorityApprovalDate DATE NOT NULL,
     ReservationConfirmDate DATE NOT NULL,
     BudgetSource NVARCHAR(50) DEFAULT N'موازنة الشركة',
-    FinalGuaranteeAmount DECIMAL(18,2) NOT NULL CHECK (FinalGuaranteeAmount >= 0),
+    FinalGuaranteeAmount DECIMAL(18,2) NOT NULL DEFAULT 0,
     FinalGuaranteeTafqeet NVARCHAR(500),
-    FinalGuaranteeStatus NVARCHAR(50) DEFAULT N'قيد السداد' CHECK (FinalGuaranteeStatus IN (N'قيد السداد', N'مسدد', N'محول من الابتدائي')),
+    FinalGuaranteeStatus NVARCHAR(50) DEFAULT N'قيد السداد',
     FinalGuaranteePaymentMethod NVARCHAR(100),
     ContractSigningDeadline DATE NOT NULL,
     EngineeringStamp DECIMAL(18,2) DEFAULT 0,
@@ -459,15 +469,15 @@ CREATE TABLE Awardings (
     TahyaMisrFund DECIMAL(18,2) DEFAULT 0,
     PostalTransferFee DECIMAL(18,2) DEFAULT 0,
     TotalDeductions AS (
-        EngineeringStamp + AppliedStamp + DevelopmentStamp + ExtensionStamp +
-        FederationFee + ShaheedStamp + TahyaMisrFund + PostalTransferFee
-    ) PERSISTED,
+        ISNULL(EngineeringStamp,0) + ISNULL(AppliedStamp,0) + ISNULL(DevelopmentStamp,0) + ISNULL(ExtensionStamp,0) +
+        ISNULL(FederationFee,0) + ISNULL(ShaheedStamp,0) + ISNULL(TahyaMisrFund,0) + ISNULL(PostalTransferFee,0)
+    ),
     NetAwardAmount AS (
         AwardedAmount - (
-            EngineeringStamp + AppliedStamp + DevelopmentStamp + ExtensionStamp +
-            FederationFee + ShaheedStamp + TahyaMisrFund + PostalTransferFee
+            ISNULL(EngineeringStamp,0) + ISNULL(AppliedStamp,0) + ISNULL(DevelopmentStamp,0) + ISNULL(ExtensionStamp,0) +
+            ISNULL(FederationFee,0) + ISNULL(ShaheedStamp,0) + ISNULL(TahyaMisrFund,0) + ISNULL(PostalTransferFee,0)
         )
-    ) PERSISTED,
+    ),
     PurchaseOrderNo NVARCHAR(100) UNIQUE,
     PurchaseOrderDate DATE,
     JournalDirectiveNo NVARCHAR(100) UNIQUE,
@@ -488,7 +498,7 @@ CREATE TABLE FinancialTransactions (
     DebitAccountName NVARCHAR(250) NOT NULL,
     CreditAccountCode NVARCHAR(50) NOT NULL,
     CreditAccountName NVARCHAR(250) NOT NULL,
-    Amount DECIMAL(18,2) NOT NULL CHECK (Amount >= 0),
+    Amount DECIMAL(18,2) NOT NULL DEFAULT 0,
     AmountTafqeet NVARCHAR(500),
     VoucherNumber NVARCHAR(100) NOT NULL,
     TransactionDate DATE DEFAULT GETDATE(),
@@ -570,7 +580,7 @@ CREATE TABLE GuaranteeTransactions (
     VendorId INT NOT NULL FOREIGN KEY REFERENCES Vendors(VendorId),
     SubmissionId INT FOREIGN KEY REFERENCES BidSubmissions(SubmissionId),
     TransactionType NVARCHAR(100) NOT NULL,
-    OriginalAmount DECIMAL(18,2) DEFAULT 0 CHECK (OriginalAmount >= 0),
+    OriginalAmount DECIMAL(18,2) DEFAULT 0,
     DeductedStamps DECIMAL(18,2) DEFAULT 0,
     DeductedAdminFees DECIMAL(18,2) DEFAULT 0,
     NetRefundAmount DECIMAL(18,2) DEFAULT 0,
@@ -858,7 +868,7 @@ GO
 -- ============================================================================
 SET IDENTITY_INSERT NeedsRequests ON;
 GO
-INSERT INTO NeedsRequests (RequestId, OperationName, OperationType, EstimatedValue, RequestingDepartment, BudgetHoldReference, ExecutionDuration, FiscalYear, ReservationType, InitialReservation, ApprovalAuthorityDate, SubmittalType, WarehouseBalance, ConstructionBranch, RequiredGrade, Status, IsDeleted, CreatedAt, SpecsAndConditions, RequiresSample, SampleDetails, WarehouseQuerySent, WarehouseQueryResponse, WarehouseQueryResponseDate, FinancialOperationNumber, FinancialOperationSymbol, TenderMethodSelected, PreliminaryReservation, ReservationTypeNew, BookletPrice, OperationTerms, ConstructionDivision, ConstructionCategory, ApprovalAuthority, AuthorityApprovalStatus, AuthorityApprovalDate, AuthorityRejectionReason, WorkflowStatus, InitialGuaranteePercent, OperationItems, FinancialNotes, FinancialReviewedAt, FinancialReviewedBy, AuthorityReviewedAt, AuthorityReviewedBy, FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes, BookletFileName, BookletFilePath, TechnicalEvaluationMethod, MinPassingScore, AllowSplitAwarding, TechnicalCriteriaNotes) VALUES (1, N'ddddd', N'تعاقدات', NULL, N'إدارة الموارد البشرية', N'', N'3 اشهر', N'2025/2026', NULL, 4, NULL, N'مظروفيين', N'لا يوجد رصيد', NULL, NULL, N'معلق', 0, N'2026-11-22 08:31:11', N'ءءءء', 0, N'', 0, NULL, NULL, N'1/2025/2026/م ح', N'م ح', N'ممارسة محدودة', 4, N'جاري', 100, N'', N'', N'', N'رئيس مجلس الإدارة', N'معتمد', N'2026-11-22', N'', N'معتمد', 2, N'[{"description":"صنف معدل","unit":"عدد","quantity":5,"unitPrice":100,"specs":"مواصفة","itemMaxScore":100,"itemMinPassingScore":70,"itemCriteria":"معايير","allowSplit":true,"isExpanded":false}]', N'', N'2026-11-22 08:36:14', NULL, N'2026-11-22 12:25:47', N'المشرف', 1, N'2026-11-22', N'ملاحظة تجريبية', NULL, NULL, N'نظام نقاط', 70, 1, N'معايير تجريبية');
+INSERT INTO NeedsRequests (RequestId, OperationName, OperationType, EstimatedValue, RequestingDepartment, BudgetHoldReference, ExecutionDuration, FiscalYear, ReservationType, InitialReservation, ApprovalAuthorityDate, SubmittalType, WarehouseBalance, ConstructionBranch, RequiredGrade, Status, IsDeleted, CreatedAt, SpecsAndConditions, RequiresSample, SampleDetails, WarehouseQuerySent, WarehouseQueryResponse, WarehouseQueryResponseDate, FinancialOperationNumber, FinancialOperationSymbol, TenderMethodSelected, PreliminaryReservation, ReservationTypeNew, BookletPrice, OperationTerms, ConstructionDivision, ConstructionCategory, ApprovalAuthority, AuthorityApprovalStatus, AuthorityApprovalDate, AuthorityRejectionReason, WorkflowStatus, InitialGuaranteePercent, OperationItems, FinancialNotes, FinancialReviewedAt, FinancialReviewedBy, AuthorityReviewedAt, AuthorityReviewedBy, FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes, BookletFileName, BookletFilePath, TechnicalEvaluationMethod, MinPassingScore, AllowSplitAwarding, TechnicalCriteriaNotes) VALUES (1, N'ddddd', N'تعاقدات', 500.00, N'إدارة الموارد البشرية', N'', N'3 اشهر', N'2025/2026', NULL, 4, NULL, N'مظروفيين', N'لا يوجد رصيد', NULL, NULL, N'معلق', 0, N'2026-11-22 08:31:11', N'ءءءء', 0, N'', 0, NULL, NULL, N'1/2025/2026/م ح', N'م ح', N'ممارسة محدودة', 4, N'جاري', 100, N'', N'', N'', N'رئيس مجلس الإدارة', N'معتمد', N'2026-11-22', N'', N'معتمد', 2, N'[{"description":"صنف معدل","unit":"عدد","quantity":5,"unitPrice":100,"specs":"مواصفة","itemMaxScore":100,"itemMinPassingScore":70,"itemCriteria":"معايير","allowSplit":true,"isExpanded":false}]', N'', N'2026-11-22 08:36:14', NULL, N'2026-11-22 12:25:47', N'المشرف', 1, N'2026-11-22', N'ملاحظة تجريبية', NULL, NULL, N'نظام نقاط', 70, 1, N'معايير تجريبية');
 INSERT INTO NeedsRequests (RequestId, OperationName, OperationType, EstimatedValue, RequestingDepartment, BudgetHoldReference, ExecutionDuration, FiscalYear, ReservationType, InitialReservation, ApprovalAuthorityDate, SubmittalType, WarehouseBalance, ConstructionBranch, RequiredGrade, Status, IsDeleted, CreatedAt, SpecsAndConditions, RequiresSample, SampleDetails, WarehouseQuerySent, WarehouseQueryResponse, WarehouseQueryResponseDate, FinancialOperationNumber, FinancialOperationSymbol, TenderMethodSelected, PreliminaryReservation, ReservationTypeNew, BookletPrice, OperationTerms, ConstructionDivision, ConstructionCategory, ApprovalAuthority, AuthorityApprovalStatus, AuthorityApprovalDate, AuthorityRejectionReason, WorkflowStatus, InitialGuaranteePercent, OperationItems, FinancialNotes, FinancialReviewedAt, FinancialReviewedBy, AuthorityReviewedAt, AuthorityReviewedBy, FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes, BookletFileName, BookletFilePath, TechnicalEvaluationMethod, MinPassingScore, AllowSplitAwarding, TechnicalCriteriaNotes) VALUES (2, N'ddddd', N'تعاقدات', 0, N'قطاع المياه', NULL, N'3 اشهر', N'2025/2026', NULL, NULL, NULL, NULL, NULL, NULL, NULL, N'معلق', 0, N'2026-11-22 12:06:12', N'ب', 1, N'ب', 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, N'في انتظار الموافقة', NULL, NULL, N'في انتظار المالية', 2, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, N'مطابق أو غير مطابق', 70, 0, NULL);
 GO
 SET IDENTITY_INSERT NeedsRequests OFF;
@@ -869,8 +879,8 @@ GO
 -- ============================================================================
 SET IDENTITY_INSERT Tenders ON;
 GO
-INSERT INTO Tenders (TenderId, RequestId, TenderNumber, TenderSymbol, TenderName, TenderMethod, RequestingDepartment, BudgetHoldReference, FiscalYear, BaseBookletPrice, CalculatedBookletPrice, InitialGuaranteeAmount, EnvelopeOpeningDate, AdNewspaper1, AdNewspaper2, AdPublishDate, AdDetails, EvaluationMethod, PassingScoreDecimal, RequiresSample, SampleDetails, Status, IsDeleted, CreatedAt, HasSubFileDistribution, SubFileDistributionId, BookletFileName, BookletFilePath, BookletFileSize, BookletUploadedAt, BookletFileContent, AllowSplitAwarding, TechnicalCriteriaNotes, OperationType, ExecutionDuration, WarehouseBalance, SpecsAndConditions, ReservationType, EstimatedValue, ConstructionDivision, ConstructionCategory, FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes, InvitedVendorsCount, InvitedVendorsJson) VALUES (1, NULL, N'99/2025/2026-هـ', N'هـ', N'عملية صيانة وإحلال محطة رفع سموحة', N'مناقصة عامة', N'إدارة التشغيل والصيانة', N'مذكرة حجز رقم 402/2025', N'2025/2026', 500, 715, 75000, N'2026-11-15 11:00:00', NULL, NULL, NULL, NULL, N'تقرير فني', NULL, 0, NULL, N'نشط', 0, N'2026-10-27 07:52:02', 0, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, N'توريدات', NULL, NULL, NULL, N'موازنة الشركة', NULL, NULL, NULL, 0, NULL, NULL, 0, NULL);
-INSERT INTO Tenders (TenderId, RequestId, TenderNumber, TenderSymbol, TenderName, TenderMethod, RequestingDepartment, BudgetHoldReference, FiscalYear, BaseBookletPrice, CalculatedBookletPrice, InitialGuaranteeAmount, EnvelopeOpeningDate, AdNewspaper1, AdNewspaper2, AdPublishDate, AdDetails, EvaluationMethod, PassingScoreDecimal, RequiresSample, SampleDetails, Status, IsDeleted, CreatedAt, HasSubFileDistribution, SubFileDistributionId, BookletFileName, BookletFilePath, BookletFileSize, BookletUploadedAt, BookletFileContent, AllowSplitAwarding, TechnicalCriteriaNotes, OperationType, ExecutionDuration, WarehouseBalance, SpecsAndConditions, ReservationType, EstimatedValue, ConstructionDivision, ConstructionCategory, FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes, InvitedVendorsCount, InvitedVendorsJson) VALUES (2, NULL, N'T-2783/2025/2026-هـ', N'هـ', N'عملية صيانة وإحلال محطة رفع سموحة', N'مناقصة عامة', N'إدارة التشغيل والصيانة', N'مذكرة حجز رقم 402/2025', N'2025/2026', 500, 715, 75000, N'2026-11-15 11:00:00', NULL, NULL, NULL, NULL, N'تقرير فني', NULL, 0, NULL, N'مكتمل التوريد والتسليم', 0, N'2026-10-27 07:59:02', 0, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, N'توريدات', NULL, NULL, NULL, N'موازنة الشركة', NULL, NULL, NULL, 0, NULL, NULL, 0, NULL);
+INSERT INTO Tenders (TenderId, RequestId, TenderNumber, TenderSymbol, TenderName, TenderMethod, RequestingDepartment, BudgetHoldReference, FiscalYear, BaseBookletPrice, CalculatedBookletPrice, InitialGuaranteeAmount, EnvelopeOpeningDate, AdNewspaper1, AdNewspaper2, AdPublishDate, AdDetails, EvaluationMethod, PassingScoreDecimal, RequiresSample, SampleDetails, Status, IsDeleted, CreatedAt, HasSubFileDistribution, SubFileDistributionId, BookletFileName, BookletFilePath, BookletFileSize, BookletUploadedAt, BookletFileContent, AllowSplitAwarding, TechnicalCriteriaNotes, OperationType, ExecutionDuration, WarehouseBalance, SpecsAndConditions, ReservationType, EstimatedValue, ConstructionDivision, ConstructionCategory, FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes, InvitedVendorsCount, InvitedVendorsJson) VALUES (1, NULL, N'99/2025/2026-هـ', N'هـ', N'عملية صيانة وإحلال محطة رفع سموحة', N'مناقصة عامة', N'إدارة التشغيل والصيانة', N'مذكرة حجز رقم 402/2025', N'2025/2026', 500, 715, 75000, N'2026-11-15 11:00:00', NULL, NULL, NULL, NULL, N'تقرير فني', NULL, 0, NULL, N'نشط', 0, N'2026-10-27 07:52:02', 0, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, N'توريدات', NULL, NULL, NULL, N'موازنة الشركة', 500.00, NULL, NULL, 0, NULL, NULL, 0, NULL);
+INSERT INTO Tenders (TenderId, RequestId, TenderNumber, TenderSymbol, TenderName, TenderMethod, RequestingDepartment, BudgetHoldReference, FiscalYear, BaseBookletPrice, CalculatedBookletPrice, InitialGuaranteeAmount, EnvelopeOpeningDate, AdNewspaper1, AdNewspaper2, AdPublishDate, AdDetails, EvaluationMethod, PassingScoreDecimal, RequiresSample, SampleDetails, Status, IsDeleted, CreatedAt, HasSubFileDistribution, SubFileDistributionId, BookletFileName, BookletFilePath, BookletFileSize, BookletUploadedAt, BookletFileContent, AllowSplitAwarding, TechnicalCriteriaNotes, OperationType, ExecutionDuration, WarehouseBalance, SpecsAndConditions, ReservationType, EstimatedValue, ConstructionDivision, ConstructionCategory, FinancialApprovalObtained, FinancialApprovalDate, FinancialApprovalNotes, InvitedVendorsCount, InvitedVendorsJson) VALUES (2, NULL, N'T-2783/2025/2026-هـ', N'هـ', N'عملية صيانة وإحلال محطة رفع سموحة', N'مناقصة عامة', N'إدارة التشغيل والصيانة', N'مذكرة حجز رقم 402/2025', N'2025/2026', 500, 715, 75000, N'2026-11-15 11:00:00', NULL, NULL, NULL, NULL, N'تقرير فني', NULL, 0, NULL, N'مكتمل التوريد والتسليم', 0, N'2026-10-27 07:59:02', 0, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, N'توريدات', NULL, NULL, NULL, N'موازنة الشركة', 500.00, NULL, NULL, 0, NULL, NULL, 0, NULL);
 GO
 SET IDENTITY_INSERT Tenders OFF;
 GO
@@ -880,12 +890,12 @@ GO
 -- ============================================================================
 SET IDENTITY_INSERT TenderItems ON;
 GO
-INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, EstimatedTotalPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (1, 1, 1, N'محبس فراشة قطر 600 مم ضغط 16 بار', N'عدد', 4, 120000, 480000, NULL, NULL, 100, 70, NULL, 1);
-INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, EstimatedTotalPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (2, 1, 2, N'طلمبة غاطسة تصرف 500 لتر/ثانية', N'عدد', 2, 650000, 1300000, NULL, NULL, 100, 70, NULL, 1);
-INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, EstimatedTotalPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (3, 1, 3, N'وصلة حائط مرنة صلب', N'طقم', 4, 25000, 100000, NULL, NULL, 100, 70, NULL, 1);
-INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, EstimatedTotalPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (4, 2, 1, N'محبس فراشة قطر 600 مم ضغط 16 بار', N'عدد', 4, 120000, 480000, NULL, NULL, 100, 70, NULL, 1);
-INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, EstimatedTotalPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (5, 2, 2, N'طلمبة غاطسة تصرف 500 لتر/ثانية', N'عدد', 2, 650000, 1300000, NULL, NULL, 100, 70, NULL, 1);
-INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, EstimatedTotalPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (6, 2, 3, N'وصلة حائط مرنة صلب', N'طقم', 4, 25000, 100000, NULL, NULL, 100, 70, NULL, 1);
+INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (1, 1, 1, N'محبس فراشة قطر 600 مم ضغط 16 بار', N'عدد', 4, 120000, NULL, NULL, 100, 70, NULL, 1);
+INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (2, 1, 2, N'طلمبة غاطسة تصرف 500 لتر/ثانية', N'عدد', 2, 650000, NULL, NULL, 100, 70, NULL, 1);
+INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (3, 1, 3, N'وصلة حائط مرنة صلب', N'طقم', 4, 25000, NULL, NULL, 100, 70, NULL, 1);
+INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (4, 2, 1, N'محبس فراشة قطر 600 مم ضغط 16 بار', N'عدد', 4, 120000, NULL, NULL, 100, 70, NULL, 1);
+INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (5, 2, 2, N'طلمبة غاطسة تصرف 500 لتر/ثانية', N'عدد', 2, 650000, NULL, NULL, 100, 70, NULL, 1);
+INSERT INTO TenderItems (ItemId, TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, Notes, ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit) VALUES (6, 2, 3, N'وصلة حائط مرنة صلب', N'طقم', 4, 25000, NULL, NULL, 100, 70, NULL, 1);
 GO
 SET IDENTITY_INSERT TenderItems OFF;
 GO
@@ -910,7 +920,7 @@ GO
 -- ============================================================================
 SET IDENTITY_INSERT Awardings ON;
 GO
-INSERT INTO Awardings (AwardingId, TenderId, WinnerSubmissionId, VendorId, AwardedAmount, AwardedAmountTafqeet, AuthorityApprovalDate, ReservationConfirmDate, BudgetSource, FinalGuaranteeAmount, FinalGuaranteeTafqeet, FinalGuaranteeStatus, FinalGuaranteePaymentMethod, ContractSigningDeadline, EngineeringStamp, AppliedStamp, DevelopmentStamp, ExtensionStamp, FederationFee, ShaheedStamp, TahyaMisrFund, PostalTransferFee, TotalDeductions, NetAwardAmount, PurchaseOrderNo, PurchaseOrderDate, JournalDirectiveNo, JournalDirectiveDate, CreatedAt, AwardDate) VALUES (1, 2, 5, 2, 1620000, N'فقط مليون وستمائة وعشرون ألف جنيهاً مصرياً لا غير', N'2026-10-27', N'2026-10-27', N'موازنة الشركة', 81000, N'فقط واحد وثمانون ألف جنيهاً مصرياً لا غير', N'مسدد', NULL, N'2026-11-06', 0, 0, 0, 0, 0, 5, 0, 0, 20383.4, 1599616.6, N'PO-2/1793087942786', NULL, N'JD-2/1793087942786', NULL, N'2026-10-27 07:59:02', N'2026-10-27');
+INSERT INTO Awardings (AwardingId, TenderId, WinnerSubmissionId, VendorId, AwardedAmount, AwardedAmountTafqeet, AuthorityApprovalDate, ReservationConfirmDate, BudgetSource, FinalGuaranteeAmount, FinalGuaranteeTafqeet, FinalGuaranteeStatus, FinalGuaranteePaymentMethod, ContractSigningDeadline, EngineeringStamp, AppliedStamp, DevelopmentStamp, ExtensionStamp, FederationFee, ShaheedStamp, TahyaMisrFund, PostalTransferFee, PurchaseOrderNo, PurchaseOrderDate, JournalDirectiveNo, JournalDirectiveDate, CreatedAt, AwardDate) VALUES (1, 2, 5, 2, 1620000, N'فقط مليون وستمائة وعشرون ألف جنيهاً مصرياً لا غير', N'2026-10-27', N'2026-10-27', N'موازنة الشركة', 81000, N'فقط واحد وثمانون ألف جنيهاً مصرياً لا غير', N'مسدد', NULL, N'2026-11-06', 0, 0, 0, 0, 0, 5, 0, 0, N'PO-2/1793087942786', NULL, N'JD-2/1793087942786', NULL, N'2026-10-27 07:59:02', N'2026-10-27');
 GO
 SET IDENTITY_INSERT Awardings OFF;
 GO
