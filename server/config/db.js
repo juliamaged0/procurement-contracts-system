@@ -69,6 +69,50 @@ async function ensureSchemaUpToDate() {
         console.log('✅ تم إنشاء جداول قاعدة البيانات بنجاح في SQL Server!');
       }
     } else {
+      // Ensure latest columns exist in NeedsRequests
+      await pool.request().query(`
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('NeedsRequests') AND name = 'WorkflowStatus')
+        BEGIN
+            ALTER TABLE NeedsRequests ADD
+                SpecsAndConditions NVARCHAR(MAX) NULL,
+                RequiresSample BIT DEFAULT 0,
+                SampleDetails NVARCHAR(500) NULL,
+                WarehouseQuerySent BIT DEFAULT 0,
+                WarehouseQueryResponse NVARCHAR(MAX) NULL,
+                WarehouseQueryResponseDate DATETIME NULL,
+                FinancialOperationNumber NVARCHAR(100) NULL,
+                FinancialOperationSymbol NVARCHAR(50) NULL,
+                TenderMethodSelected NVARCHAR(100) NULL,
+                PreliminaryReservation DECIMAL(18,2) DEFAULT 0,
+                ReservationTypeNew NVARCHAR(100) NULL,
+                BookletPrice DECIMAL(18,2) DEFAULT 0,
+                OperationTerms NVARCHAR(MAX) NULL,
+                ConstructionDivision NVARCHAR(150) NULL,
+                ConstructionCategory NVARCHAR(100) NULL,
+                ApprovalAuthority NVARCHAR(150) NULL,
+                AuthorityApprovalStatus NVARCHAR(100) DEFAULT N'في انتظار الموافقة',
+                AuthorityApprovalDate DATETIME NULL,
+                AuthorityRejectionReason NVARCHAR(500) NULL,
+                WorkflowStatus NVARCHAR(100) DEFAULT N'طلب جديد',
+                InitialGuaranteePercent DECIMAL(5,2) DEFAULT 2,
+                OperationItems NVARCHAR(MAX) NULL,
+                FinancialNotes NVARCHAR(MAX) NULL,
+                FinancialReviewedAt DATETIME NULL,
+                FinancialReviewedBy NVARCHAR(100) NULL,
+                AuthorityReviewedAt DATETIME NULL,
+                AuthorityReviewedBy NVARCHAR(100) NULL,
+                FinancialApprovalObtained BIT DEFAULT 0,
+                FinancialApprovalDate DATETIME NULL,
+                FinancialApprovalNotes NVARCHAR(MAX) NULL,
+                BookletFileName NVARCHAR(300) NULL,
+                BookletFilePath NVARCHAR(500) NULL,
+                TechnicalEvaluationMethod NVARCHAR(100) DEFAULT N'مطابق أو غير مطابق',
+                MinPassingScore DECIMAL(5,2) DEFAULT 70,
+                AllowSplitAwarding BIT DEFAULT 0,
+                TechnicalCriteriaNotes NVARCHAR(MAX) NULL;
+        END
+      `);
+
       // Ensure latest columns exist in Tenders
       await pool.request().query(`
         IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Tenders') AND name = 'BookletFileName')
