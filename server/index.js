@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -1821,8 +1822,8 @@ app.post('/api/needs-requests/submit', authenticateToken, async (req, res) => {
   }
 });
 
-// PUT: Update comprehensive needs request
-app.put('/api/needs-requests/:id/comprehensive', authenticateToken, async (req, res) => {
+// PUT: Update comprehensive needs request (Both /:id/comprehensive and /:id)
+const handleUpdateNeedsRequest = async (req, res) => {
   try {
     const { id } = req.params;
     const existing = await query('SELECT * FROM NeedsRequests WHERE RequestId = @id', { id });
@@ -1841,9 +1842,15 @@ app.put('/api/needs-requests/:id/comprehensive', authenticateToken, async (req, 
       authorityRejectionReason, reviewedBy
     } = req.body;
 
+    const safeFloat = (val, fallback = 0) => {
+      if (val === undefined || val === null || val === '') return fallback;
+      const num = parseFloat(val);
+      return isNaN(num) ? fallback : num;
+    };
+
     const opType = operationType || old.OperationType;
     const tMethod = tenderMethodSelected || old.TenderMethodSelected;
-    const estVal = estimatedValue !== undefined ? parseFloat(estimatedValue) : old.EstimatedValue;
+    const estVal = safeFloat(estimatedValue, old.EstimatedValue || 0);
     const fy = fiscalYear || old.FiscalYear || '2025/2026';
 
     const authority = approvalAuthority || (tMethod && estVal > 0 ? getApprovalAuthority(tMethod, estVal) : old.ApprovalAuthority);
@@ -1948,12 +1955,12 @@ app.put('/api/needs-requests/:id/comprehensive', authenticateToken, async (req, 
       fiscalYear: fy,
       estimatedValue: estVal,
       tenderMethodSelected: tMethod || null,
-      preliminaryReservation: preliminaryReservation !== undefined ? parseFloat(preliminaryReservation) : (old.PreliminaryReservation || estVal),
+      preliminaryReservation: safeFloat(preliminaryReservation, old.PreliminaryReservation || estVal || 0),
       reservationTypeNew: reservationTypeNew || old.ReservationTypeNew || 'جاري',
       budgetHoldReference: budgetHoldReference !== undefined ? budgetHoldReference : old.BudgetHoldReference,
-      initialGuaranteePercent: initialGuaranteePercent !== undefined ? parseFloat(initialGuaranteePercent) : (old.InitialGuaranteePercent || 2),
+      initialGuaranteePercent: safeFloat(initialGuaranteePercent, old.InitialGuaranteePercent || 2),
       submittalType: submittalType || old.SubmittalType || 'مظروفيين',
-      bookletPrice: bookletPrice !== undefined ? parseFloat(bookletPrice) : (old.BookletPrice || 0),
+      bookletPrice: safeFloat(bookletPrice, old.BookletPrice || 0),
       operationTerms: operationTerms !== undefined ? operationTerms : old.OperationTerms,
       operationItems: itemsJson,
       constructionDivision: constructionDivision !== undefined ? constructionDivision : old.ConstructionDivision,
@@ -1970,7 +1977,7 @@ app.put('/api/needs-requests/:id/comprehensive', authenticateToken, async (req, 
       authorityRejectionReason: authorityRejectionReason !== undefined ? authorityRejectionReason : old.AuthorityRejectionReason,
       reviewedBy: reviewedBy || req.user?.FullName || old.AuthorityReviewedBy || 'المستخدم',
       technicalEvaluationMethod: technicalEvaluationMethod !== undefined ? technicalEvaluationMethod : (old.TechnicalEvaluationMethod || 'مطابق أو غير مطابق'),
-      minPassingScore: minPassingScore !== undefined ? parseFloat(minPassingScore) : (old.MinPassingScore || 70),
+      minPassingScore: safeFloat(minPassingScore, old.MinPassingScore || 70),
       allowSplitAwarding: allowSplitAwarding !== undefined ? (allowSplitAwarding ? 1 : 0) : (old.AllowSplitAwarding !== undefined ? old.AllowSplitAwarding : (opType === 'توريدات' ? 1 : 0)),
       technicalCriteriaNotes: technicalCriteriaNotes !== undefined ? technicalCriteriaNotes : (old.TechnicalCriteriaNotes || ''),
       workflowStatus,
@@ -1981,9 +1988,13 @@ app.put('/api/needs-requests/:id/comprehensive', authenticateToken, async (req, 
     await logAudit(req, 'تعديل طلب احتياج', 'NeedsRequests', id, `تم تحديث بيانات طلب الاحتياج رقم ${id} (الحالة: ${workflowStatus})`);
     res.json({ success: true, message: 'تم تحديث طلب الاحتياج بنجاح', workflowStatus });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Error updating needs request:', err);
+    res.status(500).json({ error: 'خطأ في تحديث طلب الاحتياج: ' + err.message });
   }
-});
+};
+
+app.put('/api/needs-requests/:id/comprehensive', authenticateToken, handleUpdateNeedsRequest);
+app.put('/api/needs-requests/:id', authenticateToken, handleUpdateNeedsRequest);
 
 // DELETE: Archive needs request
 app.delete('/api/needs-requests/:id', authenticateToken, async (req, res) => {

@@ -11,17 +11,22 @@ import {
 } from 'lucide-react';
 
 const DEPARTMENTS = [
+  'الإدارة العامة للعقود والمشتريات',
+  'الإدارة العامة لشبكات الصرف الصحي',
+  'الإدارة العامة لمحطات المعالجة',
   'إدارة المشروعات',
   'إدارة التشغيل والصيانة',
   'إدارة الشبكات',
-  'إدارة الموارد البشرية',
+  'الإدارة الفنية',
+  'قطاع التخطيط والمشروعات',
+  'قطاع الصرف الصحي',
+  'قطاع المياه',
   'الشئون المالية',
   'إدارة المخازن',
+  'إدارة الموارد البشرية',
   'إدارة تقنية المعلومات',
-  'قطاع المياه',
-  'قطاع الصرف الصحي',
-  'الإدارة العامة',
   'إدارة الجودة والسلامة',
+  'الإدارة العامة'
 ];
 
 const OPERATION_TYPES = [
@@ -275,16 +280,25 @@ export default function NeedsRequest() {
   // Submit Handler
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.operationName.trim()) {
-      setErrorMessage('يرجى إدخال اسم وموضوع العملية في القسم الأول');
+    if (!formData.operationName || !formData.operationName.trim()) {
+      const msg = 'يرجى إدخال اسم وموضوع العملية في القسم الأول';
+      setErrorMessage(msg);
+      alert(msg);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     if (!formData.requestingDepartment) {
-      setErrorMessage('يرجى اختيار الجهة الطالبة في القسم الأول');
+      const msg = 'يرجى اختيار الجهة الطالبة في القسم الأول';
+      setErrorMessage(msg);
+      alert(msg);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
-    if (formData.authorityApprovalStatus === 'مرفوض' && !formData.authorityRejectionReason.trim()) {
-      setErrorMessage('في حال رفض الطلب، يجب كتابة سبب الرفض في القسم الثالث إلزامياً');
+    if (formData.authorityApprovalStatus === 'مرفوض' && (!formData.authorityRejectionReason || !formData.authorityRejectionReason.trim())) {
+      const msg = 'في حال رفض الطلب، يجب كتابة سبب الرفض في القسم الثالث إلزامياً';
+      setErrorMessage(msg);
+      alert(msg);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
@@ -301,16 +315,22 @@ export default function NeedsRequest() {
     try {
       if (editingRequestId) {
         await axios.put(`/api/needs-requests/${editingRequestId}/comprehensive`, payload);
+        alert('تم حفظ وتحديث طلب الاحتياج بنجاح! ✓');
         setSuccessMessage('تم تحديث طلب الاحتياج بنجاح!');
       } else {
         const res = await axios.post('/api/needs-requests/submit', payload);
+        alert(`تم تسجيل طلب الاحتياج بنجاح برقم: #${res.data.requestId}${res.data.operationNumber ? ` (رقم العملية: ${res.data.operationNumber})` : ''}`);
         setSuccessMessage(`تم تسجيل طلب الاحتياج بنجاح برقم: #${res.data.requestId}${res.data.operationNumber ? ` (رقم العملية: ${res.data.operationNumber})` : ''}`);
       }
-      fetchRequests();
+      await fetchRequests();
       resetForm();
       setActiveTab('list');
     } catch (err) {
-      setErrorMessage(err.response?.data?.error || 'حدث خطأ في حفظ الطلب');
+      console.error('Error submitting needs request:', err);
+      const msg = err.response?.data?.error || err.message || 'حدث خطأ في حفظ الطلب';
+      setErrorMessage(msg);
+      alert('خطأ أثناء الحفظ: ' + msg);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setSubmitting(false);
     }
@@ -639,6 +659,9 @@ export default function NeedsRequest() {
                     className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium"
                   >
                     <option value="">-- اختر الإدارة الطالبة --</option>
+                    {formData.requestingDepartment && !DEPARTMENTS.includes(formData.requestingDepartment) && (
+                      <option value={formData.requestingDepartment}>{formData.requestingDepartment}</option>
+                    )}
                     {DEPARTMENTS.map(dept => (
                       <option key={dept} value={dept}>{dept}</option>
                     ))}
@@ -1540,6 +1563,16 @@ export default function NeedsRequest() {
           </div>
 
           {/* Form Actions */}
+          {errorMessage && (
+            <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl flex items-center justify-between text-rose-800 text-xs font-bold shadow-sm animate-fadeIn">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                <span>تعذر الحفظ: {errorMessage}</span>
+              </div>
+              <button type="button" onClick={() => setErrorMessage('')} className="text-rose-600 hover:text-rose-800"><X className="w-4 h-4" /></button>
+            </div>
+          )}
+
           <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-3">
               <button
