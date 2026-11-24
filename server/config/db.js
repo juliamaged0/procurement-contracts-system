@@ -6,7 +6,7 @@ const fs = require('fs');
 // SQL Server Configuration
 const mssqlConfig = {
   user: process.env.DB_USER || 'sa',
-  password: process.env.DB_PASSWORD || '1',
+  password: process.env.DB_PASSWORD || '123',
   server: process.env.DB_SERVER || 'localhost',
   database: process.env.DB_NAME || 'ProcurementDB',
   port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : undefined,

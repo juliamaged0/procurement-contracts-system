@@ -1,1015 +1,550 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { 
-  Users, 
-  UserPlus, 
-  ShieldAlert, 
-  ShieldCheck, 
-  Search, 
-  Filter, 
-  Building, 
-  Briefcase, 
-  RotateCcw,
-  AlertTriangle,
-  FileText,
-  ChevronDown,
-  ChevronUp,
-  PlusCircle,
-  HardHat
+import {
+  Users, Search, PlusCircle, ChevronDown, ChevronUp, Package, HardHat,
+  Layers, UploadCloud, FileText, X, ShieldAlert, Building2
 } from 'lucide-react';
 
-export default function VendorRegistry() {
-  const [activeTab, setActiveTab] = useState('vendors'); // 'vendors', 'contractors', 'blacklist', 'groups'
-  const [vendorsList, setVendorsList] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
+const API = '/api/registry';
 
-  // Contractor Groups State
-  const [contractorGroups, setContractorGroups] = useState([]);
-  const [expandedGroupId, setExpandedGroupId] = useState(null);
-  const [groupMembers, setGroupMembers] = useState({});
-  const [showAddGroupModal, setShowAddGroupModal] = useState(false);
-  const [showAddMemberModal, setShowAddMemberModal] = useState(null); // groupId
-  const [groupForm, setGroupForm] = useState({ groupName: '', groupDescription: '', workScope: '' });
-  const [memberForm, setMemberForm] = useState({ vendorId: '', isFederationMember: false, certificates: '', notes: '' });
+/* ألوان الحالات: أخضر = قديمة ومعروفة | أصفر = جديدة | أحمر = مشطوبة */
+const STATUS = {
+  GREEN:  { label: 'قديمة ومعروفة', row: 'bg-emerald-50 border-emerald-200', badge: 'bg-emerald-100 text-emerald-800 border-emerald-300', dot: 'bg-emerald-500' },
+  YELLOW: { label: 'جديدة',          row: 'bg-amber-50 border-amber-200',     badge: 'bg-amber-100 text-amber-800 border-amber-300',     dot: 'bg-amber-400' },
+  RED:    { label: 'مشطوبة',         row: 'bg-rose-50 border-rose-200',       badge: 'bg-rose-100 text-rose-800 border-rose-300',         dot: 'bg-rose-500' },
+};
 
-  // Modals
-  const [showAddVendorModal, setShowAddVendorModal] = useState(false);
-  const [showAddContractorModal, setShowAddContractorModal] = useState(false);
-  const [showBlacklistModal, setShowBlacklistModal] = useState(false);
-  const [showUnblacklistModal, setShowUnblacklistModal] = useState(false);
-  const [selectedVendorForAction, setSelectedVendorForAction] = useState(null);
+const REQUIREMENT = {
+  FEDERATION: 'يشترط القيد بالاتحاد المصري للتشييد والبناء',
+  LICENSES: 'يشترط التأهيل والتراخيص والتصاريح',
+  NONE: null,
+};
 
-  // Form States
-  const [vendorForm, setVendorForm] = useState({
-    companyName: '',
-    companyType: 'شركة مساهمة',
-    address: '',
-    phone: '',
-    fax: '',
-    email: '',
-    taxCardNo: '',
-    taxCardExpiry: '',
-    commercialRegisterNo: '',
-    commercialRegisterExpiry: '',
-    selectedCategory: '1',
-    isRegistered: true,
-    hasPreviousWorks: true
+const GRADES = ['الأولى', 'الثانية', 'الثالثة', 'الرابعة', 'الخامسة', 'السادسة'];
+const errMsg = (e) => e.response?.data?.error || e.message;
+
+/* ------------------------------------------------------------------ */
+/* مكونات صغيرة                                                         */
+/* ------------------------------------------------------------------ */
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto" dir="rtl">
+        <div className="flex items-center justify-between border-b pb-3">
+          <h3 className="text-base font-bold text-slate-800">{title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const Field = ({ label, children }) => (
+  <div>
+    <label className="block text-xs font-bold text-slate-700 mb-1">{label}</label>
+    {children}
+  </div>
+);
+const inputCls = 'w-full px-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-sky-400';
+
+function FormButtons({ onClose, busy, label = 'حفظ' }) {
+  return (
+    <div className="flex justify-end gap-2 pt-3 border-t">
+      <button type="button" onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-bold">إلغاء</button>
+      <button type="submit" disabled={busy} className="px-5 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow">{busy ? 'جاري الحفظ...' : label}</button>
+    </div>
+  );
+}
+
+/* اختيار الحالة (أخضر/أصفر/أحمر) + سبب الشطب لو أحمر */
+function StatusPicker({ value, reason, onChange }) {
+  return (
+    <div className="space-y-2">
+      <Field label="حالة الشركة *">
+        <div className="grid grid-cols-3 gap-2">
+          {Object.entries(STATUS).map(([key, s]) => (
+            <button
+              type="button" key={key}
+              onClick={() => onChange({ status: key, blacklistReason: reason })}
+              className={`py-2 rounded-xl border-2 text-xs font-bold flex items-center justify-center gap-1.5 ${value === key ? s.badge + ' ring-2 ring-offset-1 ring-slate-300' : 'bg-white text-slate-500 border-slate-200'}`}
+            >
+              <span className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />{s.label}
+            </button>
+          ))}
+        </div>
+      </Field>
+      {value === 'RED' && (
+        <Field label="سبب الشطب *">
+          <textarea rows="2" required value={reason} onChange={(e) => onChange({ status: value, blacklistReason: e.target.value })} className={inputCls} />
+        </Field>
+      )}
+    </div>
+  );
+}
+
+function StatCard({ icon: Icon, label, value, tone }) {
+  return (
+    <div className={`rounded-xl p-3 border ${tone}`}>
+      <div className="flex items-center gap-1.5 text-[11px] font-bold opacity-80"><Icon className="w-3.5 h-3.5" />{label}</div>
+      <div className="text-2xl font-extrabold mt-1">{value}</div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const s = STATUS[status];
+  return (
+    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border text-[11px] font-bold ${s.badge}`}>
+      <span className={`w-2 h-2 rounded-full ${s.dot}`} />{s.label}
+    </span>
+  );
+}
+
+function StatusSelect({ value, onPick }) {
+  return (
+    <select value={value} onChange={(e) => onPick(e.target.value)} className="text-[11px] border rounded-lg px-1.5 py-1 bg-white">
+      {Object.entries(STATUS).map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
+    </select>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* الفورمات                                                            */
+/* ------------------------------------------------------------------ */
+function GroupForm({ onClose, onDone, url, withRequirement }) {
+  const [name, setName] = useState('');
+  const [requirementType, setRequirementType] = useState('NONE');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault(); setBusy(true);
+    try { await axios.post(url, { groupName: name, requirementType }); onDone(); }
+    catch (err) { alert('خطأ: ' + errMsg(err)); setBusy(false); }
+  };
+  return (
+    <form onSubmit={submit} className="space-y-3 text-right">
+      <Field label="اسم المجموعة *"><input required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} /></Field>
+      {withRequirement && (
+        <Field label="اشتراطات التسجيل في المجموعة">
+          <select value={requirementType} onChange={(e) => setRequirementType(e.target.value)} className={inputCls}>
+            <option value="NONE">بدون اشتراطات</option>
+            <option value="FEDERATION">القيد بالاتحاد المصري للتشييد والبناء</option>
+            <option value="LICENSES">التأهيل والتراخيص والتصاريح</option>
+          </select>
+        </Field>
+      )}
+      <FormButtons onClose={onClose} busy={busy} label="إضافة" />
+    </form>
+  );
+}
+
+function SubGroupForm({ groupId, onClose, onDone }) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault(); setBusy(true);
+    try { await axios.post(`${API}/contracts/groups/${groupId}/subgroups`, { subGroupName: name }); onDone(); }
+    catch (err) { alert('خطأ: ' + errMsg(err)); setBusy(false); }
+  };
+  return (
+    <form onSubmit={submit} className="space-y-3 text-right">
+      <Field label="اسم المجموعة الفرعية *"><input required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} /></Field>
+      <FormButtons onClose={onClose} busy={busy} label="إضافة" />
+    </form>
+  );
+}
+
+function VendorForm({ groupId, onClose, onDone }) {
+  const [f, setF] = useState({ companyName: '', address: '', phone: '', status: 'YELLOW', blacklistReason: '' });
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault(); setBusy(true);
+    try { await axios.post(`${API}/supply/groups/${groupId}/vendors`, f); onDone(); }
+    catch (err) { alert('خطأ: ' + errMsg(err)); setBusy(false); }
+  };
+  return (
+    <form onSubmit={submit} className="space-y-3 text-right">
+      <Field label="اسم الشركة *"><input required value={f.companyName} onChange={(e) => setF({ ...f, companyName: e.target.value })} className={inputCls} /></Field>
+      <Field label="العنوان"><input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} className={inputCls} /></Field>
+      <Field label="الهاتف"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} className={inputCls} /></Field>
+      <StatusPicker value={f.status} reason={f.blacklistReason} onChange={(p) => setF({ ...f, ...p })} />
+      <FormButtons onClose={onClose} busy={busy} label="إضافة المورد" />
+    </form>
+  );
+}
+
+function ContractorForm({ group, subGroup, onClose, onDone }) {
+  const req = group.RequirementType;
+  const [f, setF] = useState({
+    companyName: '', address: '', phone: '', status: 'YELLOW', blacklistReason: '',
+    federationRegistered: false, federationBranch: '', federationGrade: GRADES[0],
+    qualifiedAndLicensed: false,
   });
+  const [files, setFiles] = useState([]);
+  const [busy, setBusy] = useState(false);
 
-  const [contractorForm, setContractorForm] = useState({
-    companyName: '',
-    companyType: 'شركة مساهمة',
-    address: '',
-    phone: '',
-    taxCardNo: '',
-    commercialRegisterNo: '',
-    constructionGrade: 'الأولى',
-    constructionBranch: 'محطات وشبكات المياه والصرف الصحي',
-    isRegistered: true,
-    hasPreviousWorks: true
-  });
-
-  const [blacklistForm, setBlacklistForm] = useState({
-    blacklistReason: '',
-    blacklistAuthority: 'مجلس الإدارة',
-    blacklistDate: new Date().toISOString().split('T')[0]
-  });
-
-  const [unblacklistForm, setUnblacklistForm] = useState({
-    unblacklistedReason: '',
-    unblacklistedAuthority: 'مجلس الإدارة',
-    unblacklistedDate: new Date().toISOString().split('T')[0]
-  });
-
-  useEffect(() => {
-    fetchVendors();
-    fetchCategories();
-    fetchContractorGroups();
-  }, []);
-
-  const fetchVendors = async () => {
-    try {
-      const res = await axios.get('/api/vendors');
-      setVendorsList(res.data || []);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const fetchCategories = async () => {
-    try {
-      const res = await axios.get('/api/supply-categories');
-      setCategories(res.data || []);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const fetchContractorGroups = async () => {
-    try {
-      const res = await axios.get('/api/contractor-groups');
-      setContractorGroups(res.data || []);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const fetchGroupMembers = async (groupId) => {
-    if (groupMembers[groupId]) return; // already loaded
-    try {
-      const res = await axios.get(`/api/contractor-groups/${groupId}/members`);
-      setGroupMembers(prev => ({ ...prev, [groupId]: res.data || [] }));
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleToggleGroup = (groupId) => {
-    if (expandedGroupId === groupId) {
-      setExpandedGroupId(null);
-    } else {
-      setExpandedGroupId(groupId);
-      fetchGroupMembers(groupId);
-    }
-  };
-
-  const handleAddGroup = async (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    try {
-      await axios.post('/api/contractor-groups', groupForm);
-      alert('تم إضافة المجموعة بنجاح ✅');
-      setShowAddGroupModal(false);
-      setGroupForm({ groupName: '', groupDescription: '', workScope: '' });
-      setContractorGroups([]);
-      fetchContractorGroups();
-    } catch (err) {
-      alert('خطأ: ' + (err.response?.data?.error || err.message));
+    // نفس تحققات السيرفر - علشان المستخدم يعرف قبل الإرسال
+    if (req === 'FEDERATION') {
+      if (!f.federationRegistered) return alert('لازم تأكدي إن المقاول مسجل بالاتحاد المصري للتشييد والبناء');
+      if (!files.length) return alert('لازم رفع ملف إثبات القيد بالاتحاد المصري');
     }
-  };
-
-  const handleAddMember = async (e, groupId) => {
-    e.preventDefault();
-    try {
-      await axios.post(`/api/contractor-groups/${groupId}/members`, memberForm);
-      alert('تم إضافة المقاول للمجموعة ✅');
-      setShowAddMemberModal(null);
-      setMemberForm({ vendorId: '', isFederationMember: false, certificates: '', notes: '' });
-      // Refresh members for this group
-      setGroupMembers(prev => { const n = { ...prev }; delete n[groupId]; return n; });
-      fetchGroupMembers(groupId);
-    } catch (err) {
-      alert('خطأ: ' + (err.response?.data?.error || err.message));
+    if (req === 'LICENSES') {
+      if (!f.qualifiedAndLicensed) return alert('لازم تأكدي إن المقاول مؤهل وحاصل على التصاريح والتراخيص');
+      if (!files.length) return alert('لازم رفع مستندات التراخيص والتصاريح');
     }
-  };
-
-  const handleAddVendor = async (e) => {
-    e.preventDefault();
+    const fd = new FormData();
+    Object.entries(f).forEach(([k, v]) => fd.append(k, v));
+    files.forEach((file) => fd.append('documents', file));
+    setBusy(true);
     try {
-      await axios.post('/api/vendors', {
-        ...vendorForm,
-        constructionBranch: null,
-        constructionGrade: 'غير مجدول'
-      });
-      alert('تم تسجيل المورد بنجاح في سجل الموردين ✅');
-      setShowAddVendorModal(false);
-      fetchVendors();
-    } catch (err) {
-      alert('خطأ أثناء التسجيل: ' + (err.response?.data?.error || err.message));
-    }
+      await axios.post(`${API}/contracts/subgroups/${subGroup.SubGroupId}/contractors`, fd);
+      onDone();
+    } catch (err) { alert('خطأ: ' + errMsg(err)); setBusy(false); }
   };
-
-  const handleAddContractor = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.post('/api/vendors', {
-        ...contractorForm,
-        fax: '',
-        email: '',
-        taxCardExpiry: null,
-        commercialRegisterExpiry: null
-      });
-      alert('تم قيد المقاول بنجاح في سجل المقاولين ✅');
-      setShowAddContractorModal(false);
-      fetchVendors();
-    } catch (err) {
-      alert('خطأ أثناء التسجيل: ' + (err.response?.data?.error || err.message));
-    }
-  };
-
-  const handleBlacklist = async (e) => {
-    e.preventDefault();
-    if (!selectedVendorForAction) return;
-
-    try {
-      await axios.post(`/api/vendors/${selectedVendorForAction.VendorId}/blacklist`, blacklistForm);
-      alert('تم إدراج الشركة في سجل الشطب والممنوعين من التعامل ⛔');
-      setShowBlacklistModal(false);
-      fetchVendors();
-    } catch (err) {
-      alert('خطأ: ' + (err.response?.data?.error || err.message));
-    }
-  };
-
-  const handleUnblacklist = async (e) => {
-    e.preventDefault();
-    if (!selectedVendorForAction) return;
-
-    try {
-      await axios.post(`/api/vendors/${selectedVendorForAction.VendorId}/unblacklist`, unblacklistForm);
-      alert('تم إلغاء الشطب وإعادة قيد الشركة بنجاح 🟢');
-      setShowUnblacklistModal(false);
-      fetchVendors();
-    } catch (err) {
-      alert('خطأ: ' + (err.response?.data?.error || err.message));
-    }
-  };
-
-  const filteredVendors = vendorsList.filter(v => {
-    const matchesSearch = v.CompanyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          v.TaxCardNo.includes(searchTerm);
-    if (!matchesSearch) return false;
-
-    if (activeTab === 'blacklist') return v.IsBlacklisted === 1 || v.IsBlacklisted === true;
-    if (activeTab === 'contractors') return (v.ConstructionGrade && v.ConstructionGrade !== 'غير مجدول') && !v.IsBlacklisted;
-    if (activeTab === 'vendors') return (!v.ConstructionGrade || v.ConstructionGrade === 'غير مجدول') && !v.IsBlacklisted;
-    return true;
-  });
 
   return (
-    <div className="space-y-6">
-      
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-            <Users className="w-6 h-6 text-sky-600" />
-            <span>خامساً: سجل قيد الموردين والمقاولين وإدارة سجل الشطب</span>
-          </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            إدارة بيانات الموردين (66 مجموعة) والمقاولين (الفئات 1-7) وسجل الشركات المشطوبة والممنوعة من التعامل مع إمكانية إعادة القيد.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {activeTab === 'vendors' && (
-            <button
-              onClick={() => setShowAddVendorModal(true)}
-              className="px-4 py-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition-transform active:scale-95"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>تسجيل مورد جديد</span>
-            </button>
-          )}
-
-          {activeTab === 'contractors' && (
-            <button
-              onClick={() => setShowAddContractorModal(true)}
-              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition-transform active:scale-95"
-            >
-              <Building className="w-4 h-4" />
-              <span>تسجيل مقاول جديد</span>
-            </button>
-          )}
-          {activeTab === 'groups' && (
-            <button
-              onClick={() => setShowAddGroupModal(true)}
-              className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition-transform active:scale-95"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>إضافة مجموعة جديدة</span>
-            </button>
-          )}
-        </div>
+    <form onSubmit={submit} className="space-y-3 text-right">
+      <div className="text-[11px] text-slate-500 bg-slate-50 rounded-lg p-2">
+        {group.GroupName} ← {subGroup.SubGroupName}
+        {REQUIREMENT[req] && <div className="text-rose-600 font-bold mt-1 flex items-center gap-1"><ShieldAlert className="w-3.5 h-3.5" />{REQUIREMENT[req]}</div>}
       </div>
 
-      {/* Tabs & Search Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        
-        {/* Navigation Tabs */}
-        <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl">
-          <button
-            onClick={() => setActiveTab('vendors')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-              activeTab === 'vendors' ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            📦 سجل الموردين (التوريدات)
-          </button>
-          <button
-            onClick={() => setActiveTab('contractors')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-              activeTab === 'contractors' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            🏗️ سجل المقاولين (التعاقدات)
-          </button>
-          <button
-            onClick={() => setActiveTab('blacklist')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-              activeTab === 'blacklist' ? 'bg-rose-600 text-white shadow-sm' : 'text-rose-700 hover:bg-rose-50'
-            }`}
-          >
-            ⛔ سجل الشطب والممنوعين
-          </button>
-          <button
-            onClick={() => setActiveTab('groups')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-              activeTab === 'groups' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            🏗️ مجاميع المقاولين (التعاقدات)
-          </button>
+      <Field label="اسم الشركة *"><input required value={f.companyName} onChange={(e) => setF({ ...f, companyName: e.target.value })} className={inputCls} /></Field>
+      <Field label="العنوان"><input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} className={inputCls} /></Field>
+      <Field label="الهاتف"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} className={inputCls} /></Field>
+
+      {req === 'FEDERATION' && (
+        <div className="space-y-3 border border-sky-200 bg-sky-50/50 rounded-xl p-3">
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+            <input type="checkbox" checked={f.federationRegistered} onChange={(e) => setF({ ...f, federationRegistered: e.target.checked })} className="w-4 h-4 accent-sky-600" />
+            مسجل بالاتحاد المصري للتشييد والبناء *
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="الشعبة *"><input required value={f.federationBranch} onChange={(e) => setF({ ...f, federationBranch: e.target.value })} placeholder="الشعبة المخصصة للمجموعة" className={inputCls} /></Field>
+            <Field label="الفئة *">
+              <select value={f.federationGrade} onChange={(e) => setF({ ...f, federationGrade: e.target.value })} className={inputCls}>
+                {GRADES.map((g) => <option key={g}>{g}</option>)}
+              </select>
+            </Field>
+          </div>
         </div>
+      )}
 
-        {/* Search Input */}
-        <div className="relative w-full md:w-72">
-          <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="بحث بالاسم أو البطاقة الضريبية..."
-            className="w-full pr-9 pl-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-sky-500"
-          />
+      {req === 'LICENSES' && (
+        <div className="border border-sky-200 bg-sky-50/50 rounded-xl p-3">
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+            <input type="checkbox" checked={f.qualifiedAndLicensed} onChange={(e) => setF({ ...f, qualifiedAndLicensed: e.target.checked })} className="w-4 h-4 accent-sky-600" />
+            المتقدم مؤهل وحاصل على التصاريح والتراخيص الرسمية والقانونية اللازمة *
+          </label>
         </div>
+      )}
 
-      </div>
+      {req !== 'NONE' && (
+        <Field label={req === 'FEDERATION' ? 'ملف إثبات القيد بالاتحاد * (PDF / صور)' : 'مستندات التراخيص والتصاريح * (PDF / صور)'}>
+          <label className="flex flex-col items-center gap-1 border-2 border-dashed rounded-xl p-4 cursor-pointer text-slate-500 hover:border-sky-400 text-xs">
+            <UploadCloud className="w-6 h-6" />
+            <span>اضغطي لاختيار الملفات</span>
+            <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+              onChange={(e) => setFiles((prev) => [...prev, ...Array.from(e.target.files)])} />
+          </label>
+          {files.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {files.map((file, i) => (
+                <li key={i} className="flex items-center justify-between bg-slate-50 rounded-lg px-2 py-1 text-[11px]">
+                  <span className="flex items-center gap-1"><FileText className="w-3.5 h-3.5" />{file.name}</span>
+                  <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="text-rose-500"><X className="w-3.5 h-3.5" /></button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Field>
+      )}
 
-      {/* Table Content */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="font-bold text-slate-800 text-sm">
-            {activeTab === 'vendors' && 'قائمة الموردين المسجلين بالمجموعات التوريدية'}
-            {activeTab === 'contractors' && 'قائمة المقاولين المسجلين وشعب التشييد والبناء'}
-            {activeTab === 'blacklist' && 'سجل الشركات المشطوبة والمحرومة من التعامل رسمياً'}
-            {activeTab === 'groups' && 'مجاميع المقاولين لعمليات التعاقد (9 مجاميع رئيسية)'}
-          </h3>
-          <span className="text-xs text-slate-500 font-semibold bg-slate-100 px-3 py-1 rounded-full">
-            {activeTab === 'groups' ? `${contractorGroups.length} مجموعة` : `${filteredVendors.length} شركة`}
-          </span>
+      <StatusPicker value={f.status} reason={f.blacklistReason} onChange={(p) => setF({ ...f, ...p })} />
+      <FormButtons onClose={onClose} busy={busy} label="تسجيل المقاول" />
+    </form>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* الصفحة                                                              */
+/* ------------------------------------------------------------------ */
+export default function VendorRegistry() {
+  const [mode, setMode] = useState('supply'); // 'supply' | 'contracts'
+  const [supply, setSupply] = useState([]);
+  const [contracts, setContracts] = useState([]);
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState({});      // { 's-1': true, 'c-3': true, 'sg-7': true }
+  const [modal, setModal] = useState(null);
+
+  const toggle = (k) => setOpen((o) => ({ ...o, [k]: !o[k] }));
+
+  const load = async () => {
+    try {
+      const [s, c] = await Promise.all([axios.get(`${API}/supply`), axios.get(`${API}/contracts`)]);
+      setSupply(s.data || []);
+      setContracts(c.data || []);
+    } catch (e) { console.error(e); }
+  };
+  useEffect(() => { load(); }, []);
+  const done = () => { setModal(null); load(); };
+
+  /* ---- إحصائيات الداشبورد ---- */
+  const supplyVendors = supply.flatMap((g) => g.vendors);
+  const allContractors = contracts.flatMap((g) => g.subGroups.flatMap((s) => s.contractors));
+  const stats = {
+    supply: { groups: supply.length, vendors: supplyVendors.length, red: supplyVendors.filter((v) => v.Status === 'RED').length },
+    contracts: {
+      groups: contracts.length,
+      subs: contracts.reduce((n, g) => n + g.subGroups.length, 0),
+      contractors: allContractors.length,
+      red: allContractors.filter((c) => c.Status === 'RED').length,
+    },
+  };
+
+  /* ---- تغيير الحالة ---- */
+  const changeStatus = async (url, status) => {
+    let blacklistReason = '';
+    if (status === 'RED') {
+      blacklistReason = window.prompt('سبب الشطب؟') || '';
+      if (!blacklistReason.trim()) return;
+    }
+    try { await axios.patch(url, { status, blacklistReason }); load(); }
+    catch (e) { alert('خطأ: ' + errMsg(e)); }
+  };
+
+  const q = search.trim().toLowerCase();
+  const has = (t) => (t || '').toLowerCase().includes(q);
+
+  /* ---- مجموعات التوريدات ---- */
+  const renderSupply = () => {
+    const groups = supply.filter((g) => !q || has(g.GroupName) || g.vendors.some((v) => has(v.CompanyName)));
+    if (!groups.length) return <div className="p-10 text-center text-slate-400 text-sm">لا توجد مجموعات.</div>;
+    return groups.map((g) => {
+      const isOpen = open['s-' + g.GroupId] || !!q;
+      const red = g.vendors.filter((v) => v.Status === 'RED').length;
+      return (
+        <div key={g.GroupId} className="border-b border-slate-100">
+          <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-50" onClick={() => toggle('s-' + g.GroupId)}>
+            <div className="flex items-center gap-3">
+              <span className="w-8 h-8 rounded-full bg-sky-100 text-sky-700 text-xs font-extrabold flex items-center justify-center">{g.GroupNo ?? g.GroupId}</span>
+              <span className="font-bold text-sm text-slate-800">{g.GroupName}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] bg-slate-100 px-2 py-0.5 rounded-full font-semibold">{g.vendors.length} مورد</span>
+              {red > 0 && <span className="text-[11px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-semibold">{red} مشطوب</span>}
+              <button onClick={(e) => { e.stopPropagation(); setModal({ type: 'vendor', groupId: g.GroupId }); }}
+                className="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg text-[11px] font-bold flex items-center gap-1">
+                <PlusCircle className="w-3.5 h-3.5" />إضافة مورد
+              </button>
+              {isOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </div>
+          </div>
+          {isOpen && (
+            <div className="px-4 pb-3 space-y-2">
+              {g.vendors.length === 0 && <div className="text-center text-slate-400 text-xs py-3">لا يوجد موردون في هذه المجموعة بعد.</div>}
+              {g.vendors.filter((v) => !q || has(v.CompanyName) || has(g.GroupName)).map((v) => (
+                <div key={v.VendorId} className={`flex items-center justify-between gap-3 border rounded-xl p-3 ${STATUS[v.Status].row}`}>
+                  <div>
+                    <div className="font-bold text-sm text-slate-800">{v.CompanyName}</div>
+                    <div className="text-[11px] text-slate-600">{v.Address || 'بدون عنوان'}{v.Phone ? ` — ${v.Phone}` : ''}</div>
+                    {v.Status === 'RED' && v.BlacklistReason && <div className="text-[11px] text-rose-700 mt-1">سبب الشطب: {v.BlacklistReason}</div>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <StatusBadge status={v.Status} />
+                    <StatusSelect value={v.Status} onPick={(s) => changeStatus(`${API}/supply/vendors/${v.VendorId}/status`, s)} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+      );
+    });
+  };
 
-        {/* Contractor Groups Tab Content */}
-        {activeTab === 'groups' && (
-          <div className="divide-y divide-slate-100">
-            {contractorGroups.length === 0 ? (
-              <div className="p-10 text-center text-slate-400">
-                <HardHat className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-                <p>لا توجد مجاميع مقاولين مسجلة.</p>
+  /* ---- مجموعات التعاقدات ---- */
+  const renderContracts = () => {
+    const matchGroup = (g) => has(g.GroupName) || g.subGroups.some((s) => has(s.SubGroupName) || s.contractors.some((c) => has(c.CompanyName)));
+    const groups = contracts.filter((g) => !q || matchGroup(g));
+    if (!groups.length) return <div className="p-10 text-center text-slate-400 text-sm">لا توجد مجموعات.</div>;
+    return groups.map((g) => {
+      const gOpen = open['c-' + g.GroupId] || !!q;
+      const cons = g.subGroups.flatMap((s) => s.contractors);
+      return (
+        <div key={g.GroupId} className="border-b border-slate-100">
+          <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-50" onClick={() => toggle('c-' + g.GroupId)}>
+            <div className="flex items-center gap-3">
+              <span className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 text-xs font-extrabold flex items-center justify-center">{g.GroupNo ?? '•'}</span>
+              <div>
+                <div className="font-bold text-sm text-slate-800">{g.GroupName}</div>
+                {REQUIREMENT[g.RequirementType] && <div className="text-[10px] text-rose-600 font-bold">{REQUIREMENT[g.RequirementType]}</div>}
               </div>
-            ) : (
-              contractorGroups.map(group => (
-                <div key={group.GroupId} className="bg-white">
-                  <div
-                    className="flex items-center justify-between p-4 cursor-pointer hover:bg-amber-50/40 transition-colors"
-                    onClick={() => handleToggleGroup(group.GroupId)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="w-8 h-8 rounded-full bg-amber-100 text-amber-700 font-extrabold text-sm flex items-center justify-center border border-amber-200">
-                        {group.GroupId}
-                      </span>
-                      <div>
-                        <div className="font-bold text-slate-800 text-sm">{group.GroupName}</div>
-                        {group.WorkScope && (
-                          <div className="text-[11px] text-slate-500 mt-0.5">{group.WorkScope}</div>
-                        )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] bg-slate-100 px-2 py-0.5 rounded-full font-semibold">{g.subGroups.length} فرعية</span>
+              <span className="text-[11px] bg-slate-100 px-2 py-0.5 rounded-full font-semibold">{cons.length} مقاول</span>
+              <button onClick={(e) => { e.stopPropagation(); setModal({ type: 'subgroup', groupId: g.GroupId }); }}
+                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-bold flex items-center gap-1">
+                <Layers className="w-3.5 h-3.5" />إضافة مجموعة فرعية
+              </button>
+              {gOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </div>
+          </div>
+
+          {gOpen && (
+            <div className="px-4 pb-3 space-y-2">
+              {g.subGroups.length === 0 && <div className="text-center text-slate-400 text-xs py-3">لا توجد مجموعات فرعية بعد.</div>}
+              {g.subGroups.map((s) => {
+                const sOpen = open['sg-' + s.SubGroupId] || !!q;
+                return (
+                  <div key={s.SubGroupId} className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="flex items-center justify-between p-2.5 bg-slate-50 cursor-pointer" onClick={() => toggle('sg-' + s.SubGroupId)}>
+                      <span className="font-bold text-xs text-slate-700">{s.SubGroupName}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] bg-white px-2 py-0.5 rounded-full border">{s.contractors.length} مقاول</span>
+                        <button onClick={(e) => { e.stopPropagation(); setModal({ type: 'contractor', group: g, subGroup: s }); }}
+                          className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-bold flex items-center gap-1">
+                          <PlusCircle className="w-3.5 h-3.5" />إضافة مقاول
+                        </button>
+                        {sOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-[11px] bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-semibold">
-                        {group.MemberCount || 0} مقاول
-                      </span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setShowAddMemberModal(group.GroupId); }}
-                        className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-[11px] font-bold flex items-center gap-1"
-                      >
-                        <PlusCircle className="w-3.5 h-3.5" />
-                        إضافة مقاول
-                      </button>
-                      {expandedGroupId === group.GroupId
-                        ? <ChevronUp className="w-4 h-4 text-slate-400" />
-                        : <ChevronDown className="w-4 h-4 text-slate-400" />
-                      }
-                    </div>
+                    {sOpen && (
+                      <div className="p-2.5 space-y-2">
+                        {s.contractors.length === 0 && <div className="text-center text-slate-400 text-xs py-2">لا يوجد مقاولون بعد.</div>}
+                        {s.contractors.map((c) => (
+                          <div key={c.ContractorId} className={`border rounded-xl p-3 ${STATUS[c.Status].row}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="font-bold text-sm text-slate-800">{c.CompanyName}</div>
+                                <div className="text-[11px] text-slate-600">{c.Address || 'بدون عنوان'}{c.Phone ? ` — ${c.Phone}` : ''}</div>
+                                {c.FederationBranch && <div className="text-[11px] text-slate-600">الاتحاد المصري: شعبة {c.FederationBranch} — الفئة {c.FederationGrade}</div>}
+                                {c.QualifiedAndLicensed && <div className="text-[11px] text-slate-600">مؤهل وحاصل على التراخيص والتصاريح ✓</div>}
+                                {c.Status === 'RED' && c.BlacklistReason && <div className="text-[11px] text-rose-700 mt-1">سبب الشطب: {c.BlacklistReason}</div>}
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <StatusBadge status={c.Status} />
+                                <StatusSelect value={c.Status} onPick={(st) => changeStatus(`${API}/contracts/contractors/${c.ContractorId}/status`, st)} />
+                              </div>
+                            </div>
+                            {c.documents.length > 0 && (
+                              <div className="flex flex-wrap gap-2 mt-2">
+                                {c.documents.map((d) => (
+                                  <a key={d.DocId} href={`${API}/documents/${d.DocId}`} target="_blank" rel="noreferrer"
+                                    className="text-[11px] bg-white border rounded-lg px-2 py-0.5 text-sky-700 flex items-center gap-1 hover:bg-sky-50">
+                                    <FileText className="w-3 h-3" />{d.FileName}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-
-                  {expandedGroupId === group.GroupId && (
-                    <div className="bg-amber-50/30 border-t border-amber-100 px-4 pb-4">
-                      {!groupMembers[group.GroupId] ? (
-                        <div className="py-4 text-center text-slate-400 text-xs">جاري التحميل...</div>
-                      ) : groupMembers[group.GroupId].length === 0 ? (
-                        <div className="py-5 text-center text-slate-400 text-xs">
-                          لا يوجد مقاولون مسجلون في هذه المجموعة بعد.
-                        </div>
-                      ) : (
-                        <table className="w-full text-right text-xs mt-3">
-                          <thead>
-                            <tr className="text-slate-500 font-bold border-b border-amber-200">
-                              <th className="pb-2 pr-2">اسم الشركة / المقاول</th>
-                              <th className="pb-2">الهاتف</th>
-                              <th className="pb-2">البريد الإلكتروني</th>
-                              <th className="pb-2 text-center">عضو الاتحاد</th>
-                              <th className="pb-2">الشهادات والمستندات</th>
-                              <th className="pb-2">ملاحظات</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-amber-100">
-                            {groupMembers[group.GroupId].map(m => (
-                              <tr key={m.MemberId} className="hover:bg-amber-100/30">
-                                <td className="py-2 pr-2 font-bold text-slate-800">{m.CompanyName}</td>
-                                <td className="py-2 font-mono text-slate-600">{m.Phone || '—'}</td>
-                                <td className="py-2 text-sky-600 font-mono">{m.Email || '—'}</td>
-                                <td className="py-2 text-center">
-                                  {m.IsFederationMember ? (
-                                    <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-[10px] font-bold">✓ نعم</span>
-                                  ) : (
-                                    <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full text-[10px]">لا</span>
-                                  )}
-                                </td>
-                                <td className="py-2 text-slate-600 max-w-[140px] truncate">{m.Certificates || '—'}</td>
-                                <td className="py-2 text-slate-500">{m.Notes || '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* Regular Vendors / Contractors / Blacklist Table */}
-        {activeTab !== 'groups' && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-right text-xs">
-            <thead className="bg-slate-50 text-slate-700 font-bold border-b">
-              <tr>
-                <th className="p-3">اسم الشركة / المورد</th>
-                <th className="p-3">الشكل القانوني</th>
-                <th className="p-3">البطاقة الضريبية</th>
-                <th className="p-3">العنوان والهاتف</th>
-                {activeTab === 'contractors' && (
-                  <>
-                    <th className="p-3">فئة التشييد</th>
-                    <th className="p-3">الشعبة والتخصص</th>
-                  </>
-                )}
-                {activeTab === 'blacklist' && (
-                  <>
-                    <th className="p-3">سبب الشطب</th>
-                    <th className="p-3">جهة الشطب والتاريخ</th>
-                  </>
-                )}
-                <th className="p-3">حالة القيد</th>
-                <th className="p-3 text-center">الإجراءات</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredVendors.length === 0 ? (
-                <tr>
-                  <td colSpan="8" className="p-8 text-center text-slate-400">
-                    لا توجد شركات مسجلة مطابقة لمعايير البحث في هذا السجل.
-                  </td>
-                </tr>
-              ) : (
-                filteredVendors.map((v) => (
-                  <tr key={v.VendorId} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="p-3 font-bold text-slate-800">{v.CompanyName}</td>
-                    <td className="p-3 text-slate-600">{v.CompanyType}</td>
-                    <td className="p-3 font-mono font-bold text-slate-700">{v.TaxCardNo}</td>
-                    <td className="p-3 text-slate-600">
-                      <div>{v.Address || 'غير محدد'}</div>
-                      <div className="text-[11px] text-slate-400 font-mono">{v.Phone}</div>
-                    </td>
-
-                    {activeTab === 'contractors' && (
-                      <>
-                        <td className="p-3">
-                          <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-bold border border-indigo-200">
-                            الفئة {v.ConstructionGrade}
-                          </span>
-                        </td>
-                        <td className="p-3 text-slate-600">{v.ConstructionBranch}</td>
-                      </>
-                    )}
-
-                    {activeTab === 'blacklist' && (
-                      <>
-                        <td className="p-3 font-bold text-rose-700 max-w-xs">{v.BlacklistReason}</td>
-                        <td className="p-3 text-slate-600">
-                          <div>{v.BlacklistAuthority}</div>
-                          <div className="text-[11px] text-slate-400 font-mono">{v.BlacklistDate}</div>
-                        </td>
-                      </>
-                    )}
-
-                    <td className="p-3">
-                      {v.IsBlacklisted ? (
-                        <span className="bg-rose-100 text-rose-800 px-2.5 py-1 rounded-full font-bold text-[11px] border border-rose-300 flex items-center gap-1 w-fit">
-                          <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping"></span>
-                          <span>مشطوبة وممنوعة</span>
-                        </span>
-                      ) : v.IsRegistered ? (
-                        <span className="bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full font-bold text-[11px] border border-emerald-300 flex items-center gap-1 w-fit">
-                          <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
-                          <span>مسجلة بالقيد</span>
-                        </span>
-                      ) : (
-                        <span className="bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full font-bold text-[11px] border border-amber-300 flex items-center gap-1 w-fit">
-                          <span className="w-2 h-2 rounded-full bg-amber-600"></span>
-                          <span>سابقة أعمال</span>
-                        </span>
-                      )}
-                    </td>
-
-                    <td className="p-3 text-center">
-                      {v.IsBlacklisted ? (
-                        <button
-                          onClick={() => {
-                            setSelectedVendorForAction(v);
-                            setShowUnblacklistModal(true);
-                          }}
-                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1 mx-auto"
-                        >
-                          <RotateCcw className="w-3.5 h-3.5" />
-                          <span>إلغاء الشطب</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setSelectedVendorForAction(v);
-                            setShowBlacklistModal(true);
-                          }}
-                          className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold border border-rose-200"
-                        >
-                          شطب الشركة ⛔
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                );
+              })}
+            </div>
+          )}
         </div>
+      );
+    });
+  };
+
+
+  return (
+    <div className="space-y-6" dir="rtl">
+      {/* العنوان */}
+      <div className="border-b pb-4">
+        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+          <Users className="w-6 h-6 text-sky-600" />
+          <span>سجل الموردين والمقاولين</span>
+        </h2>
+        <div className="flex items-center gap-4 mt-2 text-[11px] text-slate-600">
+          {Object.entries(STATUS).map(([k, s]) => (
+            <span key={k} className="flex items-center gap-1"><span className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />{s.label}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* الداشبورد: مستطيلين - الضغط على أي واحد بيختار القسم */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <button onClick={() => setMode('supply')}
+          className={`text-right rounded-2xl border-2 p-4 transition-all ${mode === 'supply' ? 'border-sky-500 bg-sky-50 ring-4 ring-sky-100' : 'border-slate-200 bg-white hover:border-sky-300'}`}>
+          <div className="flex items-center gap-2 font-bold text-slate-800 mb-3"><Package className="w-5 h-5 text-sky-600" />التوريدات</div>
+          <div className="grid grid-cols-3 gap-2">
+            <StatCard icon={Layers} label="المجموعات" value={stats.supply.groups} tone="bg-white border-sky-200 text-sky-800" />
+            <StatCard icon={Building2} label="الموردين" value={stats.supply.vendors} tone="bg-white border-slate-200 text-slate-800" />
+            <StatCard icon={ShieldAlert} label="المشطوبين" value={stats.supply.red} tone="bg-white border-rose-200 text-rose-700" />
+          </div>
+        </button>
+
+        <button onClick={() => setMode('contracts')}
+          className={`text-right rounded-2xl border-2 p-4 transition-all ${mode === 'contracts' ? 'border-indigo-500 bg-indigo-50 ring-4 ring-indigo-100' : 'border-slate-200 bg-white hover:border-indigo-300'}`}>
+          <div className="flex items-center gap-2 font-bold text-slate-800 mb-3"><HardHat className="w-5 h-5 text-indigo-600" />التعاقدات</div>
+          <div className="grid grid-cols-4 gap-2">
+            <StatCard icon={Layers} label="المجموعات" value={stats.contracts.groups} tone="bg-white border-indigo-200 text-indigo-800" />
+            <StatCard icon={Layers} label="الفرعية" value={stats.contracts.subs} tone="bg-white border-indigo-200 text-indigo-800" />
+            <StatCard icon={Building2} label="المقاولين" value={stats.contracts.contractors} tone="bg-white border-slate-200 text-slate-800" />
+            <StatCard icon={ShieldAlert} label="المشطوبين" value={stats.contracts.red} tone="bg-white border-rose-200 text-rose-700" />
+          </div>
+        </button>
+      </div>
+
+      {/* شريط الأدوات */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="relative w-full md:w-80">
+          <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث باسم المجموعة أو الشركة..."
+            className="w-full pr-9 pl-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-sky-500" />
+        </div>
+        {mode === 'supply' ? (
+          <button onClick={() => setModal({ type: 'supplyGroup' })}
+            className="px-4 py-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5">
+            <PlusCircle className="w-4 h-4" />إضافة مجموعة توريدات
+          </button>
+        ) : (
+          <button onClick={() => setModal({ type: 'contractGroup' })}
+            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5">
+            <PlusCircle className="w-4 h-4" />إضافة مجموعة رئيسية
+          </button>
         )}
       </div>
 
-      {/* Modal: Add Vendor */}
-      {showAddVendorModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 border">
-            <h3 className="text-lg font-bold text-slate-800 border-b pb-3">تسجيل مورد جديد بقيد الموردين</h3>
-            
-            <form onSubmit={handleAddVendor} className="space-y-3 text-right">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اسم الشركة / المورد *</label>
-                <input
-                  type="text"
-                  required
-                  value={vendorForm.companyName}
-                  onChange={(e) => setVendorForm({ ...vendorForm, companyName: e.target.value })}
-                  placeholder="مثال: شركة الحمد لقطع غيار السيارات"
-                  className="w-full px-3 py-2 border rounded-xl text-xs"
-                />
-              </div>
+      {/* القائمة */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        {mode === 'supply' ? renderSupply() : renderContracts()}
+      </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">الشكل القانوني للشركة</label>
-                  <select
-                    value={vendorForm.companyType}
-                    onChange={(e) => setVendorForm({ ...vendorForm, companyType: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl text-xs"
-                  >
-                    <option value="أفراد">أفراد</option>
-                    <option value="شركة تضامن">شركة تضامن</option>
-                    <option value="شركة مساهمة">شركة مساهمة</option>
-                    <option value="شركة ذات مسؤولية محدودة">شركة ذات مسؤولية محدودة</option>
-                    <option value="جهة أخرى">جهة أخرى</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">رقم البطاقة الضريبية *</label>
-                  <input
-                    type="text"
-                    required
-                    value={vendorForm.taxCardNo}
-                    onChange={(e) => setVendorForm({ ...vendorForm, taxCardNo: e.target.value })}
-                    placeholder="مثال: 100-200-300"
-                    className="w-full px-3 py-2 border rounded-xl text-xs font-mono"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">المجموعة التوريدية المسجل بها (من الـ 66 مجموعة)</label>
-                <select
-                  value={vendorForm.selectedCategory}
-                  onChange={(e) => setVendorForm({ ...vendorForm, selectedCategory: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-xl text-xs"
-                >
-                  {categories.map((c) => (
-                    <option key={c.CategoryId} value={c.CategoryId}>
-                      مجموعة ({c.CategoryId}): {c.CategoryName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">العنوان</label>
-                  <input
-                    type="text"
-                    value={vendorForm.address}
-                    onChange={(e) => setVendorForm({ ...vendorForm, address: e.target.value })}
-                    placeholder="الشارع - المنطقة - المحافظة"
-                    className="w-full px-3 py-2 border rounded-xl text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">رقم الهاتف</label>
-                  <input
-                    type="text"
-                    value={vendorForm.phone}
-                    onChange={(e) => setVendorForm({ ...vendorForm, phone: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl text-xs font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowAddVendorModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-bold"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold shadow"
-                >
-                  تسجيل المورد
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* المودالات */}
+      {modal?.type === 'supplyGroup' && (
+        <Modal title="إضافة مجموعة توريدات" onClose={() => setModal(null)}>
+          <GroupForm url={`${API}/supply/groups`} onClose={() => setModal(null)} onDone={done} />
+        </Modal>
       )}
-
-      {/* Modal: Add Contractor */}
-      {showAddContractorModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 border">
-            <h3 className="text-lg font-bold text-slate-800 border-b pb-3">تسجيل مقاول جديد بسجل المقاولين</h3>
-            
-            <form onSubmit={handleAddContractor} className="space-y-3 text-right">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اسم شركة المقاولات *</label>
-                <input
-                  type="text"
-                  required
-                  value={contractorForm.companyName}
-                  onChange={(e) => setContractorForm({ ...contractorForm, companyName: e.target.value })}
-                  placeholder="مثال: شركة تبارك للمقاولات العامة"
-                  className="w-full px-3 py-2 border rounded-xl text-xs"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">فئة التشييد والبناء (كتابة) *</label>
-                  <select
-                    value={contractorForm.constructionGrade}
-                    onChange={(e) => setContractorForm({ ...contractorForm, constructionGrade: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl text-xs font-bold"
-                  >
-                    <option value="الأولى">الفئة الأولى</option>
-                    <option value="الثانية">الفئة الثانية</option>
-                    <option value="الثالثة">الفئة الثالثة</option>
-                    <option value="الرابعة">الفئة الرابعة</option>
-                    <option value="الخامسة">الفئة الخامسة</option>
-                    <option value="السادسة">الفئة السادسة</option>
-                    <option value="السابعة">الفئة السابعة</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">الشعبة المسجل بها بالاتحاد</label>
-                  <select
-                    value={contractorForm.constructionBranch}
-                    onChange={(e) => setContractorForm({ ...contractorForm, constructionBranch: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl text-xs"
-                  >
-                    <option value="محطات وشبكات المياه والصرف الصحي">أولاً: محطات وشبكات المياه والصرف الصحي</option>
-                    <option value="الأعمال الكهروميكانيكية والالكترونية">ثانياً: الأعمال الكهروميكانيكية والالكترونية</option>
-                    <option value="الأعمال البحرية والنهرية والتكريك">ثالثاً: الأعمال البحرية والنهرية والتكريك</option>
-                    <option value="أعمال الصيانة">رابعاً: أعمال الصيانة والترميم</option>
-                    <option value="أعمال المباني المتكامل">سابعاً: أعمال المباني (متكامل)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">رقم البطاقة الضريبية *</label>
-                  <input
-                    type="text"
-                    required
-                    value={contractorForm.taxCardNo}
-                    onChange={(e) => setContractorForm({ ...contractorForm, taxCardNo: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl text-xs font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">رقم السجل التجاري</label>
-                  <input
-                    type="text"
-                    value={contractorForm.commercialRegisterNo}
-                    onChange={(e) => setContractorForm({ ...contractorForm, commercialRegisterNo: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl text-xs font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowAddContractorModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-bold"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow"
-                >
-                  قيد المقاول
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {modal?.type === 'contractGroup' && (
+        <Modal title="إضافة مجموعة رئيسية (تعاقدات)" onClose={() => setModal(null)}>
+          <GroupForm url={`${API}/contracts/groups`} withRequirement onClose={() => setModal(null)} onDone={done} />
+        </Modal>
       )}
-
-      {/* Modal: Blacklist Action */}
-      {showBlacklistModal && selectedVendorForAction && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-rose-200">
-            <h3 className="text-base font-bold text-rose-700 flex items-center gap-2 border-b pb-3">
-              <ShieldAlert className="w-5 h-5" />
-              <span>إدراج الشركة بسجل الشطب والممنوعين</span>
-            </h3>
-
-            <p className="text-xs text-slate-600">
-              سيتم حظر التعامل مع شركة: <span className="font-bold text-slate-900">({selectedVendorForAction.CompanyName})</span> ومنعها من سحب الكراسات أو تقديم العطاءات.
-            </p>
-
-            <form onSubmit={handleBlacklist} className="space-y-3 text-right">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">أسباب الشطب والحرمان *</label>
-                <textarea
-                  required
-                  rows="3"
-                  value={blacklistForm.blacklistReason}
-                  onChange={(e) => setBlacklistForm({ ...blacklistForm, blacklistReason: e.target.value })}
-                  placeholder="مثال: الإخلال بشروط التعاقد والتأخر في التوريد..."
-                  className="w-full px-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-rose-500"
-                ></textarea>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">جهة إصدار قرار الشطب</label>
-                <input
-                  type="text"
-                  required
-                  value={blacklistForm.blacklistAuthority}
-                  onChange={(e) => setBlacklistForm({ ...blacklistForm, blacklistAuthority: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-xl text-xs"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowBlacklistModal(false)}
-                  className="px-4 py-2 text-slate-600 rounded-xl text-xs font-bold"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow"
-                >
-                  تأكيد الشطب ⛔
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {modal?.type === 'subgroup' && (
+        <Modal title="إضافة مجموعة فرعية" onClose={() => setModal(null)}>
+          <SubGroupForm groupId={modal.groupId} onClose={() => setModal(null)} onDone={done} />
+        </Modal>
       )}
-
-      {/* Modal: Unblacklist Action */}
-      {showUnblacklistModal && selectedVendorForAction && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-emerald-200">
-            <h3 className="text-base font-bold text-emerald-700 flex items-center gap-2 border-b pb-3">
-              <ShieldCheck className="w-5 h-5" />
-              <span>إلغاء الشطب وإعادة قيد الشركة</span>
-            </h3>
-
-            <form onSubmit={handleUnblacklist} className="space-y-3 text-right">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">سبب إلغاء الشطب ومسوغات إعادة القيد *</label>
-                <textarea
-                  required
-                  rows="3"
-                  value={unblacklistForm.unblacklistedReason}
-                  onChange={(e) => setUnblacklistForm({ ...unblacklistForm, unblacklistedReason: e.target.value })}
-                  placeholder="مثال: انتهاء فترة الحرمان وتسوية كافة الالتزامات..."
-                  className="w-full px-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-                ></textarea>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">جهة اعتماد رفع الحظر</label>
-                <input
-                  type="text"
-                  required
-                  value={unblacklistForm.unblacklistedAuthority}
-                  onChange={(e) => setUnblacklistForm({ ...unblacklistForm, unblacklistedAuthority: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-xl text-xs"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowUnblacklistModal(false)}
-                  className="px-4 py-2 text-slate-600 rounded-xl text-xs font-bold"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow"
-                >
-                  تأكيد إعادة القيد 🟢
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {modal?.type === 'vendor' && (
+        <Modal title="إضافة مورد" onClose={() => setModal(null)}>
+          <VendorForm groupId={modal.groupId} onClose={() => setModal(null)} onDone={done} />
+        </Modal>
       )}
-
-      {/* Modal: Add Contractor Group */}
-      {showAddGroupModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-amber-200">
-            <h3 className="text-base font-bold text-amber-800 border-b pb-3 flex items-center gap-2">
-              <HardHat className="w-5 h-5" />
-              إضافة مجموعة مقاولين جديدة
-            </h3>
-            <form onSubmit={handleAddGroup} className="space-y-3 text-right">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اسم المجموعة *</label>
-                <input
-                  type="text"
-                  required
-                  value={groupForm.groupName}
-                  onChange={(e) => setGroupForm({ ...groupForm, groupName: e.target.value })}
-                  placeholder="مثال: أعمال التشييد والمباني"
-                  className="w-full px-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-amber-400"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">وصف المجموعة</label>
-                <textarea
-                  rows="2"
-                  value={groupForm.groupDescription}
-                  onChange={(e) => setGroupForm({ ...groupForm, groupDescription: e.target.value })}
-                  placeholder="وصف مختصر لنوع أعمال هذه المجموعة"
-                  className="w-full px-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-amber-400"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">نطاق العمل (WorkScope)</label>
-                <input
-                  type="text"
-                  value={groupForm.workScope}
-                  onChange={(e) => setGroupForm({ ...groupForm, workScope: e.target.value })}
-                  placeholder="مثال: إنشاءات — كهربائيات — سباكة..."
-                  className="w-full px-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-amber-400"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowAddGroupModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-bold"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow"
-                >
-                  إضافة المجموعة
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {modal?.type === 'contractor' && (
+        <Modal title="تسجيل مقاول" onClose={() => setModal(null)}>
+          <ContractorForm group={modal.group} subGroup={modal.subGroup} onClose={() => setModal(null)} onDone={done} />
+        </Modal>
       )}
-
-      {/* Modal: Add Member to Group */}
-      {showAddMemberModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-amber-200">
-            <h3 className="text-base font-bold text-amber-800 border-b pb-3 flex items-center gap-2">
-              <PlusCircle className="w-5 h-5" />
-              إضافة مقاول للمجموعة #{showAddMemberModal}
-            </h3>
-            <form onSubmit={(e) => handleAddMember(e, showAddMemberModal)} className="space-y-3 text-right">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اختيار المقاول من السجل *</label>
-                <select
-                  required
-                  value={memberForm.vendorId}
-                  onChange={(e) => setMemberForm({ ...memberForm, vendorId: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-amber-400"
-                >
-                  <option value="">-- اختر مقاول مسجل --</option>
-                  {vendorsList
-                    .filter(v => v.ConstructionGrade && v.ConstructionGrade !== 'غير مجدول' && !v.IsBlacklisted)
-                    .map(v => (
-                      <option key={v.VendorId} value={v.VendorId}>
-                        {v.CompanyName} — الفئة {v.ConstructionGrade}
-                      </option>
-                    ))
-                  }
-                </select>
-              </div>
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  id="isFedMember"
-                  checked={memberForm.isFederationMember}
-                  onChange={(e) => setMemberForm({ ...memberForm, isFederationMember: e.target.checked })}
-                  className="w-4 h-4 accent-amber-600"
-                />
-                <label htmlFor="isFedMember" className="text-xs font-bold text-slate-700">
-                  عضو في الاتحاد المصري للمقاولين
-                </label>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">الشهادات والمستندات</label>
-                <input
-                  type="text"
-                  value={memberForm.certificates}
-                  onChange={(e) => setMemberForm({ ...memberForm, certificates: e.target.value })}
-                  placeholder="مثال: ISO 9001، شهادة التصنيف، كشف حساب..."
-                  className="w-full px-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-amber-400"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">ملاحظات</label>
-                <textarea
-                  rows="2"
-                  value={memberForm.notes}
-                  onChange={(e) => setMemberForm({ ...memberForm, notes: e.target.value })}
-                  placeholder="أي ملاحظات إضافية..."
-                  className="w-full px-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-amber-400"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowAddMemberModal(null)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-bold"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow"
-                >
-                  إضافة المقاول للمجموعة
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
