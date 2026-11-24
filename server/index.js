@@ -27,6 +27,16 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/registry', require('./config/registryRoutes'));   
 
+const { sanitizeMojibake } = require('./scripts/fix_mojibake');
+// Global response sanitizer: automatically decodes any mojibake in outgoing JSON
+app.use((req, res, next) => {
+  const originalJson = res.json;
+  res.json = function(data) {
+    return originalJson.call(this, sanitizeMojibake(data));
+  };
+  next();
+});
+
 // Helper: Audit Logger
 async function logAudit(req, action, entityName, entityId, details) {
   try {

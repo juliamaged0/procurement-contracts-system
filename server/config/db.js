@@ -2,6 +2,37 @@ require('dotenv').config();
 const sql = require('mssql');
 const path = require('path');
 const fs = require('fs');
+const iconv = require('iconv-lite');
+
+// Mojibake auto-fix: converts any Windows-1252 misinterpreted UTF-8 Arabic text back to pure Arabic
+function fixMojibake(val) {
+  if (typeof val !== 'string' || !val) return val;
+  if (!/[\u00C0-\u00FF]/.test(val)) return val;
+  try {
+    const candidate = iconv.decode(iconv.encode(val, 'win1252'), 'utf8');
+    if (/[\u0600-\u06FF]/.test(candidate) && !candidate.includes('\uFFFD')) {
+      return candidate;
+    }
+  } catch (e) {
+    // fallback
+  }
+  return val;
+}
+
+function sanitizeObject(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (typeof v === 'string') {
+      obj[k] = fixMojibake(v);
+    } else if (Array.isArray(v)) {
+      v.forEach(item => sanitizeObject(item));
+    } else if (typeof v === 'object' && v !== null && !(v instanceof Date)) {
+      sanitizeObject(v);
+    }
+  }
+  return obj;
+}
 
 // SQL Server Configuration
 const mssqlConfig = {
@@ -190,8 +221,57 @@ async function ensureSchemaUpToDate() {
         END
       `);
     }
+
+    // Auto-repair any existing mojibake in tables
+    await runMojibakeRepair(pool);
   } catch (err) {
     console.warn('⚠️ ملاحظة في فحص الهيكل:', err.message);
+  }
+}
+
+// Automatically repair Latin-1 / Windows-1252 corrupted text in SQL Server tables
+async function runMojibakeRepair(activePool) {
+  const p = activePool || pool;
+  if (!p) return;
+  const TABLES = [
+    { table: 'NeedsRequests', pk: 'RequestId', columns: ['OperationName', 'OperationType', 'RequestingDepartment', 'ExecutionDuration', 'SpecsAndConditions', 'WarehouseBalance', 'TenderMethodSelected', 'ReservationTypeNew', 'WorkflowStatus', 'Status', 'TechnicalEvaluationMethod', 'FinancialApprovalNotes', 'FinancialNotes', 'ApprovalAuthority'] },
+    { table: 'Tenders', pk: 'TenderId', columns: ['TenderName', 'TenderMethod', 'RequestingDepartment', 'BudgetHoldReference', 'EvaluationMethod', 'Status', 'OperationType', 'ExecutionDuration', 'WarehouseBalance', 'SpecsAndConditions', 'ReservationType', 'ConstructionDivision'] },
+    { table: 'TenderItems', pk: 'ItemId', columns: ['ItemDescription', 'Unit', 'Notes', 'ItemCriteria'] },
+    { table: 'Vendors', pk: 'VendorId', columns: ['VendorName', 'CommercialName', 'City', 'Address', 'ContactPerson', 'ActivityType', 'CompanyCategory', 'LegalForm'] },
+    { table: 'Users', pk: 'UserId', columns: ['FullName', 'Department', 'Role'] },
+    { table: 'SupplyCategories', pk: 'CategoryId', columns: ['CategoryName', 'SubCategoryName', 'Description', 'StandardUnit'] },
+    { table: 'ContractorGroups', pk: 'GroupId', columns: ['GroupName', 'Division', 'Category', 'Specialization'] },
+    { table: 'WarehouseInventory', pk: 'ProductId', columns: ['ProductName', 'Category', 'Unit', 'WarehouseLocation'] }
+  ];
+
+  for (const t of TABLES) {
+    try {
+      const check = await p.request().query(`SELECT 1 FROM sys.tables WHERE name = '${t.table}'`);
+      if (check.recordset.length === 0) continue;
+      const cols = t.columns.join(', ');
+      const rows = (await p.request().query(`SELECT ${t.pk}, ${cols} FROM ${t.table}`)).recordset;
+      for (const row of rows) {
+        const pkVal = row[t.pk];
+        const updates = [];
+        const req = p.request();
+        req.input('pkVal', pkVal);
+        for (const col of t.columns) {
+          const val = row[col];
+          if (typeof val === 'string' && val.length > 0) {
+            const fixed = fixMojibake(val);
+            if (fixed !== val) {
+              updates.push(`${col} = @val_${col}`);
+              req.input(`val_${col}`, fixed);
+            }
+          }
+        }
+        if (updates.length > 0) {
+          await req.query(`UPDATE ${t.table} SET ${updates.join(', ')} WHERE ${t.pk} = @pkVal`);
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
   }
 }
 
@@ -203,7 +283,9 @@ async function query(sqlQuery, params = {}) {
 
   const request = pool.request();
   Object.keys(params).forEach(key => {
-    request.input(key, params[key]);
+    const rawVal = params[key];
+    const cleanVal = typeof rawVal === 'string' ? fixMojibake(rawVal) : rawVal;
+    request.input(key, cleanVal);
   });
 
   let execQuery = sqlQuery.trim();
@@ -223,6 +305,14 @@ async function query(sqlQuery, params = {}) {
   }
 
   const records = result.recordset || [];
+  
+  // Clean all records before returning to application
+  if (Array.isArray(records)) {
+    for (let i = 0; i < records.length; i++) {
+      sanitizeObject(records[i]);
+    }
+  }
+
   records.lastID = lastID;
   records.rowsAffected = result.rowsAffected ? result.rowsAffected[0] : 0;
   records.recordset = result.recordset;
