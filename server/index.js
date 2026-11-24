@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const fs = require('fs');
-const { connectDb, query } = require('./config/db');
+const { connectDb, query } = require('./config/db')
 const { 
   calculateTenderBookletPrice, 
   calculateAwardDeductions, 
