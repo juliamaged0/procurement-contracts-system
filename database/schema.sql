@@ -963,3 +963,66 @@ INSERT INTO AuditLogs (LogId, UserId, Username, UserRole, Action, EntityName, En
 GO
 SET IDENTITY_INSERT AuditLogs OFF;
 GO
+
+-- ============================================================================
+-- 23. VENDOR & CONTRACTOR DETAILED REGISTRY (Reg_*)
+-- ============================================================================
+IF OBJECT_ID('Reg_ContractorDocuments', 'U') IS NULL
+BEGIN
+    CREATE TABLE Reg_SupplyGroups (
+        GroupId INT IDENTITY(1,1) PRIMARY KEY,
+        GroupNo INT,
+        GroupName NVARCHAR(300) NOT NULL UNIQUE
+    );
+
+    CREATE TABLE Reg_SupplyVendors (
+        VendorId INT IDENTITY(1,1) PRIMARY KEY,
+        GroupId INT NOT NULL FOREIGN KEY REFERENCES Reg_SupplyGroups(GroupId) ON DELETE CASCADE,
+        CompanyName NVARCHAR(300) NOT NULL,
+        Address NVARCHAR(500) NULL,
+        Phone NVARCHAR(100) NULL,
+        Status NVARCHAR(20) NOT NULL DEFAULT 'GREEN',
+        BlacklistReason NVARCHAR(MAX) NULL,
+        CreatedAt DATETIME DEFAULT GETDATE()
+    );
+
+    CREATE TABLE Reg_ContractGroups (
+        GroupId INT IDENTITY(1,1) PRIMARY KEY,
+        GroupNo INT,
+        GroupName NVARCHAR(300) NOT NULL UNIQUE,
+        RequirementType NVARCHAR(50) NOT NULL DEFAULT 'NONE'
+    );
+
+    CREATE TABLE Reg_ContractSubGroups (
+        SubGroupId INT IDENTITY(1,1) PRIMARY KEY,
+        GroupId INT NOT NULL FOREIGN KEY REFERENCES Reg_ContractGroups(GroupId) ON DELETE CASCADE,
+        SubGroupName NVARCHAR(300) NOT NULL
+    );
+
+    CREATE TABLE Reg_Contractors (
+        ContractorId INT IDENTITY(1,1) PRIMARY KEY,
+        SubGroupId INT NOT NULL FOREIGN KEY REFERENCES Reg_ContractSubGroups(SubGroupId) ON DELETE CASCADE,
+        CompanyName NVARCHAR(300) NOT NULL,
+        Address NVARCHAR(500) NULL,
+        Phone NVARCHAR(100) NULL,
+        Status NVARCHAR(20) NOT NULL DEFAULT 'GREEN',
+        BlacklistReason NVARCHAR(MAX) NULL,
+        FederationRegistered BIT NULL,
+        FederationBranch NVARCHAR(200) NULL,
+        FederationGrade NVARCHAR(100) NULL,
+        QualifiedAndLicensed BIT NULL,
+        CreatedAt DATETIME DEFAULT GETDATE()
+    );
+
+    CREATE TABLE Reg_ContractorDocuments (
+        DocId INT IDENTITY(1,1) PRIMARY KEY,
+        ContractorId INT NOT NULL FOREIGN KEY REFERENCES Reg_Contractors(ContractorId) ON DELETE CASCADE,
+        DocType NVARCHAR(50) NULL,
+        FileName NVARCHAR(300) NOT NULL,
+        FilePath NVARCHAR(500) NOT NULL,
+        MimeType NVARCHAR(100) NULL,
+        UploadedAt DATETIME DEFAULT GETDATE()
+    );
+END
+GO
+

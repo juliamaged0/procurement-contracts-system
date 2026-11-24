@@ -1,12 +1,27 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
+import { sanitizeMojibake, fixMojibake } from '../utils/fixMojibake';
 
 const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem('procurement_user');
-    return savedUser ? JSON.parse(savedUser) : null;
+    try {
+      const savedUser = localStorage.getItem('procurement_user');
+      if (!savedUser) return null;
+      let parsed = JSON.parse(savedUser);
+      parsed = sanitizeMojibake(parsed);
+      if (parsed) {
+        if (parsed.username === 'sa' || !parsed.fullName || /[\u00C0-\u00FF]/.test(parsed.fullName)) {
+          parsed.fullName = 'المشرف العام (Super Admin)';
+        } else {
+          parsed.fullName = fixMojibake(parsed.fullName);
+        }
+      }
+      return parsed;
+    } catch (e) {
+      return null;
+    }
   });
 
   const [token, setToken] = useState(() => localStorage.getItem('procurement_token') || null);

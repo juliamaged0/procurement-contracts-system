@@ -2,6 +2,7 @@ import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, UserCheck, LogOut, FileText, Bell } from 'lucide-react';
+import { fixMojibake } from '../utils/fixMojibake';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -60,7 +61,7 @@ export default function Navbar() {
             </div>
             <div className="text-right">
               <div className="text-sm font-bold text-slate-800">
-                {user?.fullName || 'المشرف العام'}
+                {user?.username === 'sa' ? 'المشرف العام (Super Admin)' : (fixMojibake(user?.fullName) || 'المشرف العام')}
               </div>
               <div className="text-[11px] font-semibold text-sky-600">
                 {getRoleLabel(user?.role)}

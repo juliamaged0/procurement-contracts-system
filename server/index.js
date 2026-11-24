@@ -504,7 +504,17 @@ async function generateTenderNumber(operationType, tenderMethod, fiscalYear) {
 app.get('/api/tenders', authenticateToken, async (req, res) => {
   try {
     const tenders = await query(`
-      SELECT T.*, N.OperationName, N.OperationType, N.EstimatedValue, N.RequestingDepartment, N.BudgetHoldReference as ReqBudgetRef
+      SELECT T.*, 
+             ISNULL(T.TenderName, N.OperationName) AS OperationName,
+             ISNULL(T.OperationType, N.OperationType) AS OperationType,
+             ISNULL(T.EstimatedValue, N.EstimatedValue) AS EstimatedValue,
+             ISNULL(T.RequestingDepartment, N.RequestingDepartment) AS RequestingDepartment,
+             N.BudgetHoldReference as ReqBudgetRef,
+             ISNULL(T.SubmittalType, ISNULL(N.SubmittalType, N'مظروف واحد')) AS SubmittalType,
+             ISNULL(T.TechnicalEvaluationMethod, ISNULL(N.TechnicalEvaluationMethod, N'مطابق أو غير مطابق')) AS TechnicalEvaluationMethod,
+             ISNULL(T.MinPassingScore, ISNULL(N.MinPassingScore, 70)) AS MinPassingScore,
+             ISNULL(T.OpeningSessionType, N'فني') AS OpeningSessionType,
+             N.OperationItems
       FROM Tenders T
       LEFT JOIN NeedsRequests N ON T.RequestId = N.RequestId
       WHERE T.IsDeleted = 0
@@ -519,17 +529,72 @@ app.get('/api/tenders', authenticateToken, async (req, res) => {
 app.get('/api/tenders/:tenderId/items', authenticateToken, async (req, res) => {
   try {
     const { tenderId } = req.params;
-    const items = await query('SELECT * FROM TenderItems WHERE TenderId = @tenderId ORDER BY ItemNumber ASC', { tenderId });
+    let items = await query('SELECT * FROM TenderItems WHERE TenderId = @tenderId ORDER BY ItemNumber ASC', { tenderId });
+    
+    // Auto-populate from NeedsRequests if TenderItems is empty
+    if (!items || items.length === 0) {
+      const tRow = await query('SELECT RequestId, TechnicalEvaluationMethod, MinPassingScore FROM Tenders WHERE TenderId = @tenderId', { tenderId });
+      if (tRow.length > 0 && tRow[0].RequestId) {
+        const reqRow = await query('SELECT OperationItems, OperationName, TechnicalEvaluationMethod, MinPassingScore FROM NeedsRequests WHERE RequestId = @reqId', { reqId: tRow[0].RequestId });
+        if (reqRow.length > 0 && reqRow[0].OperationItems) {
+          try {
+            const opItems = typeof reqRow[0].OperationItems === 'string' ? JSON.parse(reqRow[0].OperationItems) : reqRow[0].OperationItems;
+            if (Array.isArray(opItems) && opItems.length > 0) {
+              for (let i = 0; i < opItems.length; i++) {
+                const oi = opItems[i];
+                const qty = parseFloat(oi.quantity || 1);
+                const price = parseFloat(oi.unitPrice || 0);
+                await query(`
+                  INSERT INTO TenderItems (
+                    TenderId, ItemNumber, ItemDescription, Unit, EstimatedQuantity, EstimatedUnitPrice, Notes,
+                    ItemSpecs, ItemMaxScore, ItemMinPassingScore, ItemCriteria, AllowSplit
+                  ) VALUES (
+                    @tId, @num, @desc, @unit, @qty, @price, @notes, @specs, @maxScore, @minScore, @crit, @split
+                  )
+                `, {
+                  tId: tenderId,
+                  num: i + 1,
+                  desc: oi.description || oi.name || oi.itemDescription || 'بند رقم ' + (i + 1),
+                  unit: oi.unit || 'عدد',
+                  qty: qty,
+                  price: price,
+                  notes: oi.notes || null,
+                  specs: oi.specs || null,
+                  maxScore: parseFloat(oi.itemMaxScore) || 100,
+                  minScore: parseFloat(oi.itemMinPassingScore) || parseFloat(reqRow[0].MinPassingScore) || 70,
+                  crit: (oi.criteriaList && oi.criteriaList.length > 0) ? JSON.stringify(oi.criteriaList) : (typeof oi.itemCriteria === 'object' ? JSON.stringify(oi.itemCriteria) : (oi.itemCriteria || null)),
+                  split: oi.allowSplit ? 1 : 0
+                });
+              }
+              items = await query('SELECT * FROM TenderItems WHERE TenderId = @tenderId ORDER BY ItemNumber ASC', { tenderId });
+            }
+          } catch (e) {
+            console.warn('Error syncing TenderItems from OperationItems:', e.message);
+          }
+        }
+      }
+    }
+
     const parsed = (items || []).map(it => {
       let criteriaList = [];
       if (it.ItemCriteria) {
         try {
-          if (it.ItemCriteria.trim().startsWith('[') || it.ItemCriteria.trim().startsWith('{')) {
+          if (typeof it.ItemCriteria === 'object') {
+            criteriaList = it.ItemCriteria;
+          } else if (it.ItemCriteria.trim().startsWith('[') || it.ItemCriteria.trim().startsWith('{')) {
             criteriaList = JSON.parse(it.ItemCriteria);
           }
         } catch (e) {
           criteriaList = [];
         }
+      }
+      if (!criteriaList || criteriaList.length === 0) {
+        criteriaList = [
+          { name: 'مطابقة المواصفات الفنية وجودة الخامات', maxScore: 40 },
+          { name: 'سابقة الأعمال والخبرة في مشروعات مماثلة', maxScore: 25 },
+          { name: 'شهادات الجودة وفترات الضمان المعتمدة', maxScore: 20 },
+          { name: 'البرنامج الزمني للتوريد وسرعة الاستجابة', maxScore: 15 }
+        ];
       }
       return {
         ...it,
@@ -1009,10 +1074,36 @@ app.get('/api/tenders/:tenderId/submissions', authenticateToken, async (req, res
     `, { tenderId });
 
     for (let sub of submissions) {
-      sub.items = await query('SELECT * FROM BidItems WHERE SubmissionId = @submissionId', { submissionId: sub.SubmissionId });
+      const itms = await query('SELECT * FROM BidItems WHERE SubmissionId = @submissionId', { submissionId: sub.SubmissionId });
+      sub.items = (itms || []).map(bi => {
+        let critScores = [];
+        if (bi.CriteriaScores) {
+          try {
+            critScores = typeof bi.CriteriaScores === 'string' ? JSON.parse(bi.CriteriaScores) : bi.CriteriaScores;
+          } catch (e) {
+            critScores = [];
+          }
+        }
+        return {
+          ...bi,
+          criteriaScores: Array.isArray(critScores) ? critScores : []
+        };
+      });
     }
 
     res.json(submissions);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Advance/Update Opening Session Type (فني / مالي / مكتمل)
+app.put('/api/tenders/:tenderId/opening-session', authenticateToken, requireRoles('Admin', 'CommitteeMember', 'TenderOfficer'), async (req, res) => {
+  try {
+    const { tenderId } = req.params;
+    const { sessionType } = req.body;
+    await query('UPDATE Tenders SET OpeningSessionType = @s WHERE TenderId = @id', { s: sessionType || 'فني', id: tenderId });
+    res.json({ success: true, sessionType });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1029,6 +1120,7 @@ app.post('/api/submissions', authenticateToken, requireRoles('Admin', 'Committee
       hasTaxCard, taxCardNo, taxCardValidUntil, hasFederationCert, federationGrade,
       hasEInvoiceModel, hasAdvancePaymentCert, hasPreviousWorks, hasVATCert, hasCatalog,
       hasCert14S, hasCert4S, hasApprovalCert, sampleSubmitted, sampleNumber, sampleDeliveryDate, sampleNotes,
+      envelopeStage, financialEnvelopeOpened, technicalStatus, technicalScore, technicalNotes, financialNotes,
       items
     } = req.body;
 
@@ -1062,14 +1154,16 @@ app.post('/api/submissions', authenticateToken, requireRoles('Admin', 'Committee
         DeductionNoteNo, DeductionNoteDate, DeductionEntity, HasCommercialRegister, CommercialRegisterNo,
         CommercialRegisterValidUntil, HasTaxCard, TaxCardNo, TaxCardValidUntil, HasFederationCert, FederationGrade,
         HasEInvoiceModel, HasAdvancePaymentCert, HasPreviousWorks, HasVATCert, HasCatalog, HasCert14S, HasCert4S,
-        HasApprovalCert, SampleSubmitted, SampleNumber, SampleDeliveryDate, SampleNotes, TechnicalStatus, FinancialTotalAmount, IsDeleted
+        HasApprovalCert, SampleSubmitted, SampleNumber, SampleDeliveryDate, SampleNotes, TechnicalStatus, TechnicalScore,
+        EnvelopeStage, FinancialEnvelopeOpened, TechnicalNotes, FinancialNotes, FinancialTotalAmount, IsDeleted
       ) VALUES (
         @tenderId, @vendorId, @bidFractionSerial, @initialInsuranceAmount, @guaranteePaymentMethod, @initialInsuranceStatus,
         @receiptNumber, @receiptDate, @checkNumber, @bankName, @checkDate, @guaranteeLetterNo, @guaranteeLetterIssueDate, @guaranteeLetterExpiryDate,
         @deductionNoteNo, @deductionNoteDate, @deductionEntity, @hasCommercialRegister, @commercialRegisterNo,
         @commercialRegisterValidUntil, @hasTaxCard, @taxCardNo, @taxCardValidUntil, @hasFederationCert, @federationGrade,
         @hasEInvoiceModel, @hasAdvancePaymentCert, @hasPreviousWorks, @hasVATCert, @hasCatalog, @hasCert14S, @hasCert4S,
-        @hasApprovalCert, @sampleSubmitted, @sampleNumber, @sampleDeliveryDate, @sampleNotes, N'تحت التقييم', @financialTotal, 0
+        @hasApprovalCert, @sampleSubmitted, @sampleNumber, @sampleDeliveryDate, @sampleNotes, @technicalStatus, @technicalScore,
+        @envelopeStage, @financialEnvelopeOpened, @technicalNotes, @financialNotes, @financialTotal, 0
       )
     `, {
       tenderId, vendorId, bidFractionSerial,
@@ -1087,6 +1181,12 @@ app.post('/api/submissions', authenticateToken, requireRoles('Admin', 'Committee
       hasPreviousWorks: hasPreviousWorks ? 1 : 0, hasVATCert: hasVATCert ? 1 : 0, hasCatalog: hasCatalog ? 1 : 0,
       hasCert14S: hasCert14S ? 1 : 0, hasCert4S: hasCert4S ? 1 : 0, hasApprovalCert: hasApprovalCert ? 1 : 0,
       sampleSubmitted: sampleSubmitted ? 1 : 0, sampleNumber: sampleNumber || null, sampleDeliveryDate: sampleDeliveryDate || null, sampleNotes: sampleNotes || null,
+      technicalStatus: technicalStatus || 'تحت التقييم',
+      technicalScore: parseFloat(technicalScore) || 0,
+      envelopeStage: envelopeStage || 'فني',
+      financialEnvelopeOpened: financialEnvelopeOpened ? 1 : 0,
+      technicalNotes: technicalNotes || null,
+      financialNotes: financialNotes || null,
       financialTotal
     });
 
@@ -1096,9 +1196,16 @@ app.post('/api/submissions', authenticateToken, requireRoles('Admin', 'Committee
       for (let item of items) {
         const qty = parseFloat(item.quantity || 0);
         const price = parseFloat(item.unitPrice || 0);
+        const critScores = item.criteriaScores ? (typeof item.criteriaScores === 'string' ? item.criteriaScores : JSON.stringify(item.criteriaScores)) : null;
         await query(`
-          INSERT INTO BidItems (SubmissionId, TenderItemId, ItemName, UnitType, Quantity, UnitPrice, TotalPrice, TechnicalEvaluation, Notes)
-          VALUES (@submissionId, @tenderItemId, @itemName, @unitType, @quantity, @unitPrice, @totalPrice, @technicalEvaluation, @notes)
+          INSERT INTO BidItems (
+            SubmissionId, TenderItemId, ItemName, UnitType, Quantity, UnitPrice, TotalPrice, 
+            TechnicalEvaluation, TechnicalStatus, ItemScore, CriteriaScores, FinancialDiscountPercent, FinancialNotes, Notes
+          )
+          VALUES (
+            @submissionId, @tenderItemId, @itemName, @unitType, @quantity, @unitPrice, @totalPrice, 
+            @technicalEvaluation, @technicalStatus, @itemScore, @criteriaScores, @financialDiscountPercent, @financialNotes, @notes
+          )
         `, {
           submissionId,
           tenderItemId: item.tenderItemId || null,
@@ -1107,7 +1214,12 @@ app.post('/api/submissions', authenticateToken, requireRoles('Admin', 'Committee
           quantity: qty,
           unitPrice: price,
           totalPrice: qty * price,
-          technicalEvaluation: item.technicalEvaluation || 'مقبول أساسي',
+          technicalEvaluation: item.technicalEvaluation || item.technicalStatus || 'مقبول أساسي',
+          technicalStatus: item.technicalStatus || 'مطابق',
+          itemScore: parseFloat(item.itemScore) || 0,
+          criteriaScores: critScores,
+          financialDiscountPercent: parseFloat(item.financialDiscountPercent) || 0,
+          financialNotes: item.financialNotes || null,
           notes: item.notes || null
         });
       }
@@ -1116,6 +1228,120 @@ app.post('/api/submissions', authenticateToken, requireRoles('Admin', 'Committee
     await logAudit(req, 'تفريغ عطاء جديد', 'فض المظاريف', submissionId, `تم تفريغ عطاء ${vendorData[0].CompanyName} بالكسر ${bidFractionSerial} وإجمالي ${financialTotal} ج.م`);
 
     res.json({ message: 'تم إدخال وتفريغ العطاء بنجاح', submissionId, bidFractionSerial, financialTotal });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update Existing Bid Submission (تحديث تفاصيل العطاء أو فض المظروف المالي)
+app.put('/api/submissions/:id', authenticateToken, requireRoles('Admin', 'CommitteeMember'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      initialInsuranceAmount, guaranteePaymentMethod, initialInsuranceStatus,
+      receiptNumber, receiptDate, checkNumber, bankName, checkDate, guaranteeLetterNo, 
+      guaranteeLetterIssueDate, guaranteeLetterExpiryDate, deductionNoteNo, deductionNoteDate, deductionEntity,
+      hasCommercialRegister, hasTaxCard, hasFederationCert, hasEInvoiceModel, hasVATCert, sampleSubmitted,
+      envelopeStage, financialEnvelopeOpened, technicalStatus, technicalScore, technicalNotes, financialNotes,
+      items
+    } = req.body;
+
+    let financialTotal = 0;
+    if (items && Array.isArray(items)) {
+      financialTotal = items.reduce((sum, item) => sum + (parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)), 0);
+    }
+
+    await query(`
+      UPDATE BidSubmissions SET
+        InitialInsuranceAmount = @initialInsuranceAmount,
+        GuaranteePaymentMethod = @guaranteePaymentMethod,
+        InitialInsuranceStatus = @initialInsuranceStatus,
+        ReceiptNumber = @receiptNumber,
+        ReceiptDate = @receiptDate,
+        CheckNumber = @checkNumber,
+        BankName = @bankName,
+        CheckDate = @checkDate,
+        GuaranteeLetterNo = @guaranteeLetterNo,
+        GuaranteeLetterIssueDate = @guaranteeLetterIssueDate,
+        GuaranteeLetterExpiryDate = @guaranteeLetterExpiryDate,
+        DeductionNoteNo = @deductionNoteNo,
+        DeductionNoteDate = @deductionNoteDate,
+        DeductionEntity = @deductionEntity,
+        HasCommercialRegister = @hasCommercialRegister,
+        HasTaxCard = @hasTaxCard,
+        HasFederationCert = @hasFederationCert,
+        HasEInvoiceModel = @hasEInvoiceModel,
+        HasVATCert = @hasVATCert,
+        SampleSubmitted = @sampleSubmitted,
+        TechnicalStatus = @technicalStatus,
+        TechnicalScore = @technicalScore,
+        EnvelopeStage = @envelopeStage,
+        FinancialEnvelopeOpened = @financialEnvelopeOpened,
+        TechnicalNotes = @technicalNotes,
+        FinancialNotes = @financialNotes,
+        FinancialTotalAmount = @financialTotal
+      WHERE SubmissionId = @id
+    `, {
+      id,
+      initialInsuranceAmount: initialInsuranceAmount || 0,
+      guaranteePaymentMethod: guaranteePaymentMethod || 'نقداً',
+      initialInsuranceStatus: initialInsuranceStatus || 'ساري',
+      receiptNumber: receiptNumber || null, receiptDate: receiptDate || null,
+      checkNumber: checkNumber || null, bankName: bankName || null, checkDate: checkDate || null,
+      guaranteeLetterNo: guaranteeLetterNo || null, guaranteeLetterIssueDate: guaranteeLetterIssueDate || null, guaranteeLetterExpiryDate: guaranteeLetterExpiryDate || null,
+      deductionNoteNo: deductionNoteNo || null, deductionNoteDate: deductionNoteDate || null, deductionEntity: deductionEntity || null,
+      hasCommercialRegister: hasCommercialRegister ? 1 : 0,
+      hasTaxCard: hasTaxCard ? 1 : 0,
+      hasFederationCert: hasFederationCert ? 1 : 0,
+      hasEInvoiceModel: hasEInvoiceModel ? 1 : 0,
+      hasVATCert: hasVATCert ? 1 : 0,
+      sampleSubmitted: sampleSubmitted ? 1 : 0,
+      technicalStatus: technicalStatus || 'تحت التقييم',
+      technicalScore: parseFloat(technicalScore) || 0,
+      envelopeStage: envelopeStage || 'فني',
+      financialEnvelopeOpened: financialEnvelopeOpened ? 1 : 0,
+      technicalNotes: technicalNotes || null,
+      financialNotes: financialNotes || null,
+      financialTotal
+    });
+
+    // Update or insert items
+    if (items && Array.isArray(items)) {
+      await query('DELETE FROM BidItems WHERE SubmissionId = @id', { id });
+      for (let item of items) {
+        const qty = parseFloat(item.quantity || 0);
+        const price = parseFloat(item.unitPrice || 0);
+        const critScores = item.criteriaScores ? (typeof item.criteriaScores === 'string' ? item.criteriaScores : JSON.stringify(item.criteriaScores)) : null;
+        await query(`
+          INSERT INTO BidItems (
+            SubmissionId, TenderItemId, ItemName, UnitType, Quantity, UnitPrice, TotalPrice, 
+            TechnicalEvaluation, TechnicalStatus, ItemScore, CriteriaScores, FinancialDiscountPercent, FinancialNotes, Notes
+          )
+          VALUES (
+            @submissionId, @tenderItemId, @itemName, @unitType, @quantity, @unitPrice, @totalPrice, 
+            @technicalEvaluation, @technicalStatus, @itemScore, @criteriaScores, @financialDiscountPercent, @financialNotes, @notes
+          )
+        `, {
+          submissionId: id,
+          tenderItemId: item.tenderItemId || null,
+          itemName: item.itemName,
+          unitType: item.unitType || 'عدد',
+          quantity: qty,
+          unitPrice: price,
+          totalPrice: qty * price,
+          technicalEvaluation: item.technicalEvaluation || item.technicalStatus || 'مقبول أساسي',
+          technicalStatus: item.technicalStatus || 'مطابق',
+          itemScore: parseFloat(item.itemScore) || 0,
+          criteriaScores: critScores,
+          financialDiscountPercent: parseFloat(item.financialDiscountPercent) || 0,
+          financialNotes: item.financialNotes || null,
+          notes: item.notes || null
+        });
+      }
+    }
+
+    await logAudit(req, 'تحديث بيانات العطاء', 'فض المظاريف', id, `تم تحديث تفريغ العطاء رقم ${id} وإجمالي مالي ${financialTotal} ج.م`);
+    res.json({ success: true, message: 'تم تحديث بيانات العطاء بنجاح', financialTotal });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1166,27 +1392,52 @@ app.get('/api/tenders/:tenderId/comparative-analysis', authenticateToken, async 
 app.post('/api/tenders/:tenderId/evaluate', authenticateToken, requireRoles('Admin', 'CommitteeMember'), async (req, res) => {
   try {
     const { tenderId } = req.params;
-    const { evaluations } = req.body;
+    const { evaluations, committeeRecommendation, winnerSubmissionId } = req.body;
 
     if (evaluations && Array.isArray(evaluations)) {
       for (let ev of evaluations) {
         await query(`
           UPDATE BidSubmissions
           SET TechnicalStatus = @technicalStatus,
-              TechnicalScore = @technicalScore
+              TechnicalScore = @technicalScore,
+              RejectionReason = @rejectionReason,
+              TechnicalNotes = @technicalNotes
           WHERE SubmissionId = @submissionId
         `, {
           submissionId: ev.submissionId,
           technicalStatus: ev.technicalStatus,
-          technicalScore: ev.technicalScore || 0
+          technicalScore: parseFloat(ev.technicalScore) || 0,
+          rejectionReason: ev.rejectionReason || null,
+          technicalNotes: ev.technicalNotes || null
         });
+
+        // Update item evaluations if sent
+        if (ev.items && Array.isArray(ev.items)) {
+          for (let itm of ev.items) {
+            const critScores = itm.criteriaScores ? (typeof itm.criteriaScores === 'string' ? itm.criteriaScores : JSON.stringify(itm.criteriaScores)) : null;
+            await query(`
+              UPDATE BidItems
+              SET TechnicalStatus = @techStatus,
+                  ItemScore = @itemScore,
+                  CriteriaScores = @criteriaScores,
+                  Notes = @notes
+              WHERE BidItemId = @bidItemId
+            `, {
+              bidItemId: itm.BidItemId || itm.bidItemId,
+              techStatus: itm.technicalStatus || itm.TechnicalStatus || 'مطابق',
+              itemScore: parseFloat(itm.itemScore ?? itm.ItemScore) || 0,
+              criteriaScores: critScores,
+              notes: itm.notes || itm.Notes || null
+            });
+          }
+        }
       }
     }
 
     await query("UPDATE Tenders SET Status = N'مبتوت' WHERE TenderId = @tenderId", { tenderId });
     await logAudit(req, 'اعتماد محضر البت', 'شاشة البت', tenderId, `تم اعتماد تقييم البت الفني والمالي للعملية رقم ${tenderId}`);
 
-    res.json({ message: 'تم إتمام عملية البت الفني والمالي بنجاح' });
+    res.json({ message: 'تم إتمام عملية البت الفني والمالي واعتماد توصية اللجنة بنجاح', winnerSubmissionId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2918,9 +3169,12 @@ app.get('/api/guarantees/accounting/:tenderId', authenticateToken, async (req, r
   }
 });
 
-// Start Server
-connectDb().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🌐 ASDCO Procurement & Contracts Backend Server running on http://localhost:${PORT}`);
-  });
+// Start Server immediately so Vite proxy always connects
+const server = app.listen(PORT, () => {
+  console.log(`🌐 ASDCO Procurement & Contracts Backend Server running on http://localhost:${PORT}`);
+});
+
+// Connect to Database strictly with Microsoft SQL Server
+connectDb().catch(err => {
+  console.warn('⚠️ سيرفر التطبيق يعمل وجارٍ محاولة ربط قاعدة بيانات SQL Server...');
 });

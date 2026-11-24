@@ -37,7 +37,7 @@ function sanitizeObject(obj) {
 // SQL Server Configuration
 const mssqlConfig = {
   user: process.env.DB_USER || 'sa',
-  password: process.env.DB_PASSWORD || '123',
+  password: process.env.DB_PASSWORD || '1',
   server: process.env.DB_SERVER || 'localhost',
   database: process.env.DB_NAME || 'ProcurementDB',
   port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : undefined,
@@ -57,24 +57,50 @@ const mssqlConfig = {
 
 let pool = null;
 
-// Connect to Database strictly with Microsoft SQL Server
+// Connect to Database strictly with Microsoft SQL Server with Auto-Failover
 async function connectDb() {
-  try {
-    console.log(`🔌 جارٍ الاتصال بقاعدة بيانات Microsoft SQL Server على (${mssqlConfig.server} / ${mssqlConfig.database})...`);
-    pool = await sql.connect(mssqlConfig);
-    console.log('🚀 تم الاتصال بنجاح بقاعدة بيانات Microsoft SQL Server (SSMS)!');
+  const candidates = [
+    { name: `الأساسي (${mssqlConfig.server}:${mssqlConfig.port || 1433})`, config: mssqlConfig },
+    { name: 'مثيل ASDCO (Port 14330)', config: { ...mssqlConfig, port: 14330, options: { ...mssqlConfig.options, instanceName: undefined } } },
+    { name: 'المثيل المسمى ASDCO', config: { ...mssqlConfig, port: undefined, server: 'localhost', options: { ...mssqlConfig.options, instanceName: 'ASDCO' } } },
+    { name: 'المثيل المحلي (.)', config: { ...mssqlConfig, server: '.', port: undefined, options: { ...mssqlConfig.options, instanceName: undefined } } },
+    { name: 'المثيل MSSQLSERVER01', config: { ...mssqlConfig, port: undefined, server: 'localhost', options: { ...mssqlConfig.options, instanceName: 'MSSQLSERVER01' } } }
+  ];
 
-    // Run schema updates if needed
-    await ensureSchemaUpToDate();
-    return pool;
-  } catch (err) {
-    console.error('❌ فشل الاتصال بـ Microsoft SQL Server:', err.message);
-    console.error('\n⚠️ تنبيه: تم إيقاف محرك SQLite نهائياً بناءً على طلبك. يجب تشغيل خدمة SQL Server والتأكد من بيانات الاتصال في ملف .env:');
-    console.error('1. تأكد من أن خدمة SQL Server قيد التشغيل (Running).');
-    console.error('2. تأكد من تفعيل بروتوكول TCP/IP في SQL Server Configuration Manager.');
-    console.error('3. تحقق من صحة اسم السيرفر وقاعدة البيانات والمستخدم وكلمة المرور في ملف server/.env.');
-    throw err;
+  let lastError = null;
+  for (const cand of candidates) {
+    try {
+      console.log(`🔌 محاولة الاتصال بـ Microsoft SQL Server عبر [${cand.name}]...`);
+      pool = await new sql.ConnectionPool({ ...cand.config, connectionTimeout: 6000 }).connect();
+      console.log(`🚀 تم الاتصال بنجاح بقاعدة البيانات (${cand.config.database}) عبر [${cand.name}]!`);
+      await ensureSchemaUpToDate();
+      return pool;
+    } catch (err) {
+      lastError = err;
+      // If error is database does not exist, try creating it via master
+      if (err.message && (err.message.includes('Cannot open database') || err.message.includes('does not exist'))) {
+        try {
+          console.log(`ℹ️ جاري إنشاء قاعدة البيانات ${cand.config.database} على المثيل...`);
+          const masterPool = await new sql.ConnectionPool({ ...cand.config, database: 'master', connectionTimeout: 5000 }).connect();
+          await masterPool.request().query(`IF DB_ID('${cand.config.database}') IS NULL CREATE DATABASE [${cand.config.database}];`);
+          await masterPool.close();
+          pool = await new sql.ConnectionPool({ ...cand.config, connectionTimeout: 6000 }).connect();
+          console.log(`🚀 تم إنشاء والاتصال بقاعدة البيانات (${cand.config.database}) عبر [${cand.name}]!`);
+          await ensureSchemaUpToDate();
+          return pool;
+        } catch (mErr) {
+          // continue
+        }
+      }
+    }
   }
+
+  console.error('❌ تعذر الاتصال بـ Microsoft SQL Server بعد فحص جميع المثيلات المتاحة.');
+  console.error('الخطأ الأخير:', lastError?.message);
+  console.error('\n🛠️ حل المشكلة في خطوتين بسيطتين:');
+  console.error('1. افتح برنامج SSMS وافتح الملف Fix_SSMS_Connection.sql الموجود في مجلد المشروع واضغط Execute (F5).');
+  console.error('2. اضغط كليك يمين على اسم السيرفر في أعلى SSMS واختر Restart.');
+  throw lastError;
 }
 
 // Auto-migration helper to ensure newer columns exist
@@ -220,6 +246,123 @@ async function ensureSchemaUpToDate() {
             );
         END
       `);
+
+      // Ensure modern evaluation and envelope columns exist
+      await pool.request().query(`
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Tenders') AND name = 'SubmittalType')
+          ALTER TABLE Tenders ADD SubmittalType NVARCHAR(50) DEFAULT N'مظروف واحد';
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Tenders') AND name = 'TechnicalEvaluationMethod')
+          ALTER TABLE Tenders ADD TechnicalEvaluationMethod NVARCHAR(100) DEFAULT N'مطابق أو غير مطابق';
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Tenders') AND name = 'MinPassingScore')
+          ALTER TABLE Tenders ADD MinPassingScore DECIMAL(5,2) DEFAULT 70;
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Tenders') AND name = 'OpeningSessionType')
+          ALTER TABLE Tenders ADD OpeningSessionType NVARCHAR(50) DEFAULT N'فني';
+
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('BidSubmissions') AND name = 'EnvelopeStage')
+          ALTER TABLE BidSubmissions ADD EnvelopeStage NVARCHAR(50) DEFAULT N'فني';
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('BidSubmissions') AND name = 'FinancialEnvelopeOpened')
+          ALTER TABLE BidSubmissions ADD FinancialEnvelopeOpened BIT DEFAULT 0;
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('BidSubmissions') AND name = 'TechnicalNotes')
+          ALTER TABLE BidSubmissions ADD TechnicalNotes NVARCHAR(MAX) NULL;
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('BidSubmissions') AND name = 'FinancialNotes')
+          ALTER TABLE BidSubmissions ADD FinancialNotes NVARCHAR(MAX) NULL;
+
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('BidItems') AND name = 'TechnicalStatus')
+          ALTER TABLE BidItems ADD TechnicalStatus NVARCHAR(50) DEFAULT N'مطابق';
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('BidItems') AND name = 'ItemScore')
+          ALTER TABLE BidItems ADD ItemScore DECIMAL(5,2) DEFAULT 0;
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('BidItems') AND name = 'CriteriaScores')
+          ALTER TABLE BidItems ADD CriteriaScores NVARCHAR(MAX) NULL;
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('BidItems') AND name = 'FinancialDiscountPercent')
+          ALTER TABLE BidItems ADD FinancialDiscountPercent DECIMAL(5,2) DEFAULT 0;
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('BidItems') AND name = 'FinancialNotes')
+          ALTER TABLE BidItems ADD FinancialNotes NVARCHAR(500) NULL;
+      `);
+
+      // Ensure Registry tables (Reg_*) exist for سجل الموردين والمقاولين
+      await pool.request().query(`
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Reg_SupplyGroups')
+        BEGIN
+          CREATE TABLE Reg_SupplyGroups (
+            GroupId INT IDENTITY(1,1) PRIMARY KEY,
+            GroupNo INT,
+            GroupName NVARCHAR(300) NOT NULL UNIQUE
+          );
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Reg_SupplyVendors')
+        BEGIN
+          CREATE TABLE Reg_SupplyVendors (
+            VendorId INT IDENTITY(1,1) PRIMARY KEY,
+            GroupId INT NOT NULL FOREIGN KEY REFERENCES Reg_SupplyGroups(GroupId) ON DELETE CASCADE,
+            CompanyName NVARCHAR(300) NOT NULL,
+            Address NVARCHAR(500) NULL,
+            Phone NVARCHAR(100) NULL,
+            Status NVARCHAR(20) NOT NULL DEFAULT 'GREEN',
+            BlacklistReason NVARCHAR(MAX) NULL,
+            CreatedAt DATETIME DEFAULT GETDATE()
+          );
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Reg_ContractGroups')
+        BEGIN
+          CREATE TABLE Reg_ContractGroups (
+            GroupId INT IDENTITY(1,1) PRIMARY KEY,
+            GroupNo INT,
+            GroupName NVARCHAR(300) NOT NULL UNIQUE,
+            RequirementType NVARCHAR(50) NOT NULL DEFAULT 'NONE'
+          );
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Reg_ContractSubGroups')
+        BEGIN
+          CREATE TABLE Reg_ContractSubGroups (
+            SubGroupId INT IDENTITY(1,1) PRIMARY KEY,
+            GroupId INT NOT NULL FOREIGN KEY REFERENCES Reg_ContractGroups(GroupId) ON DELETE CASCADE,
+            SubGroupName NVARCHAR(300) NOT NULL
+          );
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Reg_Contractors')
+        BEGIN
+          CREATE TABLE Reg_Contractors (
+            ContractorId INT IDENTITY(1,1) PRIMARY KEY,
+            SubGroupId INT NOT NULL FOREIGN KEY REFERENCES Reg_ContractSubGroups(SubGroupId) ON DELETE CASCADE,
+            CompanyName NVARCHAR(300) NOT NULL,
+            Address NVARCHAR(500) NULL,
+            Phone NVARCHAR(100) NULL,
+            Status NVARCHAR(20) NOT NULL DEFAULT 'GREEN',
+            BlacklistReason NVARCHAR(MAX) NULL,
+            FederationRegistered BIT NULL,
+            FederationBranch NVARCHAR(200) NULL,
+            FederationGrade NVARCHAR(100) NULL,
+            QualifiedAndLicensed BIT NULL,
+            CreatedAt DATETIME DEFAULT GETDATE()
+          );
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Reg_ContractorDocuments')
+        BEGIN
+          CREATE TABLE Reg_ContractorDocuments (
+            DocId INT IDENTITY(1,1) PRIMARY KEY,
+            ContractorId INT NOT NULL FOREIGN KEY REFERENCES Reg_Contractors(ContractorId) ON DELETE CASCADE,
+            DocType NVARCHAR(50) NULL,
+            FileName NVARCHAR(300) NOT NULL,
+            FilePath NVARCHAR(500) NOT NULL,
+            MimeType NVARCHAR(100) NULL,
+            UploadedAt DATETIME DEFAULT GETDATE()
+          );
+        END
+      `);
+
+      // Ensure Reg_SupplyGroups is populated if empty
+      const rCheck = await pool.request().query('SELECT COUNT(*) AS c FROM Reg_SupplyGroups');
+      if (rCheck.recordset[0].c === 0) {
+        await pool.request().query(`
+          INSERT INTO Reg_SupplyGroups (GroupNo, GroupName)
+          SELECT CategoryId, CategoryName FROM SupplyCategories;
+        `);
+      }
     }
 
     // Auto-repair any existing mojibake in tables
@@ -237,11 +380,11 @@ async function runMojibakeRepair(activePool) {
     { table: 'NeedsRequests', pk: 'RequestId', columns: ['OperationName', 'OperationType', 'RequestingDepartment', 'ExecutionDuration', 'SpecsAndConditions', 'WarehouseBalance', 'TenderMethodSelected', 'ReservationTypeNew', 'WorkflowStatus', 'Status', 'TechnicalEvaluationMethod', 'FinancialApprovalNotes', 'FinancialNotes', 'ApprovalAuthority'] },
     { table: 'Tenders', pk: 'TenderId', columns: ['TenderName', 'TenderMethod', 'RequestingDepartment', 'BudgetHoldReference', 'EvaluationMethod', 'Status', 'OperationType', 'ExecutionDuration', 'WarehouseBalance', 'SpecsAndConditions', 'ReservationType', 'ConstructionDivision'] },
     { table: 'TenderItems', pk: 'ItemId', columns: ['ItemDescription', 'Unit', 'Notes', 'ItemCriteria'] },
-    { table: 'Vendors', pk: 'VendorId', columns: ['VendorName', 'CommercialName', 'City', 'Address', 'ContactPerson', 'ActivityType', 'CompanyCategory', 'LegalForm'] },
+    { table: 'Vendors', pk: 'VendorId', columns: ['CompanyName', 'Address', 'CategoryGroup', 'ConstructionBranch'] },
     { table: 'Users', pk: 'UserId', columns: ['FullName', 'Department', 'Role'] },
-    { table: 'SupplyCategories', pk: 'CategoryId', columns: ['CategoryName', 'SubCategoryName', 'Description', 'StandardUnit'] },
-    { table: 'ContractorGroups', pk: 'GroupId', columns: ['GroupName', 'Division', 'Category', 'Specialization'] },
-    { table: 'WarehouseInventory', pk: 'ProductId', columns: ['ProductName', 'Category', 'Unit', 'WarehouseLocation'] }
+    { table: 'SupplyCategories', pk: 'CategoryId', columns: ['CategoryName'] },
+    { table: 'ContractorGroups', pk: 'GroupId', columns: ['GroupName', 'GroupDescription', 'WorkScope'] },
+    { table: 'WarehouseInventory', pk: 'ProductId', columns: ['ProductName', 'Unit', 'Location'] }
   ];
 
   for (const t of TABLES) {

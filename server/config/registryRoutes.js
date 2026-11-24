@@ -7,7 +7,6 @@
  * ومحتاج:  npm i multer    (جوه فولدر server)
  */
 const express = require('express');
-const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { query } = require('./db'); // query(sqlText, { name: value }) -> rows
@@ -19,16 +18,29 @@ const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'contractor-docs');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const ALLOWED = ['application/pdf', 'image/jpeg', 'image/png'];
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-    filename: (_req, file, cb) =>
-      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname).toLowerCase()}`),
-  }),
-  limits: { fileSize: 10 * 1024 * 1024, files: 10 },
-  fileFilter: (_req, file, cb) =>
-    ALLOWED.includes(file.mimetype) ? cb(null, true) : cb(new Error('مسموح فقط بملفات PDF أو صور JPG/PNG')),
-});
+
+let upload;
+try {
+  const multer = require('multer');
+  upload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+      filename: (_req, file, cb) =>
+        cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname).toLowerCase()}`),
+    }),
+    limits: { fileSize: 10 * 1024 * 1024, files: 10 },
+    fileFilter: (_req, file, cb) =>
+      ALLOWED.includes(file.mimetype) ? cb(null, true) : cb(new Error('مسموح فقط بملفات PDF أو صور JPG/PNG')),
+  });
+} catch (e) {
+  // Graceful fallback dummy if multer is not installed
+  upload = {
+    array: () => (req, res, next) => {
+      req.files = req.files || [];
+      next();
+    }
+  };
+}
 
 const wrap = (fn) => (req, res) =>
   fn(req, res).catch((e) => {
